@@ -1,5 +1,24 @@
 # 更新日志
 
+## [0.1.1] - 2026-09-13
+
+### 修复
+- **传输层错误重试**:连接重置、SSL 截断等网络层失败纳入指数退避重试
+  (此前仅重试 HTTP 429/5xx);新增 `clh-llm:transport-error` 条件。
+- **非流式读取策略**:非流式请求改为让 dexador 整体读取(`:force-string`),
+  修复 GLM 网关「200 + Content-Length 响应在 want-stream 流上读不到数据」
+  的兼容性问题。
+- **优雅降级**:非流式请求在传输层重试耗尽后自动降级为流式重组
+  (返回值等价),动态变量 `clh-llm:*degrade-non-stream-to-stream*` 可关。
+- SSE 读取与整体读取对「服务端不发 close_notify 即断开」保持容忍,
+  保留已到达的数据,完整性交由 JSON 解析兜底。
+
+### 新增
+- 真机联调套件厂商化:支持 `CLH_PROVIDER`/`CLH_MODEL`/`CLH_API_KEY`/
+  `CLH_LIVE_EXTRA_BODY` 环境变量,一套用例覆盖全部厂商。
+- Qwen(`qwen3.8-flash`)与 GLM(`glm-5.3-flash`)真机联调通过:
+  SBCL 与 CCL 双实现 × 三厂商(含 DeepSeek)live 套件全部通过。
+
 ## [0.1.0] - 2026-09-13
 
 首个可用版本。

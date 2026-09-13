@@ -25,6 +25,12 @@
   (:documentation "模型接入层错误基类。")
   (:report (lambda (c stream) (write-string (llm-error-message c) stream))))
 
+(define-condition transport-error (llm-error)
+  ()
+  (:documentation
+   "网络传输层失败(连接重置、SSL 截断、DNS 失败等)。
+与 HTTP 429/5xx 一样属于可重试错误;重试耗尽后向上传播。"))
+
 (define-condition api-key-missing (llm-error)
   ((%provider-name :initarg :provider-name :reader api-key-missing-provider))
   (:documentation "未配置 API Key(既未显式传入,环境变量也无值)时信号。")
@@ -200,6 +206,11 @@ ENV-VAR       API Key 的环境变量名。"
 ;;; HTTP 传输(可注入)
 ;;; ---------------------------------------------------------------------------
 
+(defparameter *degrade-non-stream-to-stream* t
+  "非流式(:STREAM NIL)请求在传输层重试耗尽后,是否自动降级为流式重组。
+背景:个别网关(如 GLM)对非流式长请求存在 TLS 层截断问题,而流式始终可用;
+降级后返回值与非流式完全等价(内部按增量重组完整消息)。置 NIL 关闭。")
+
 (defparameter *http-post-fn* 'default-http-post
   "HTTP POST 传输函数,签名为:
      (FN URL HEADERS BODY &KEY WANT-STREAM TIMEOUT)
@@ -221,17 +232,34 @@ ENV-VAR       API Key 的环境变量名。"
                    ((typep raw 'flexi-streams:flexi-stream) raw)
                    (t (flexi-streams:make-flexi-stream raw :external-format :utf-8)))))
     (flet ((do-request ()
-             (multiple-value-bind (response-stream status)
-                 (dexador:request url
-                                  :method :post
-                                  :headers (append headers '(("Accept-Encoding" . "identity")))
-                                  :content body
-                                  :want-stream t
-                                  :keep-alive nil
-                                  :connect-timeout 10
-                                  :read-timeout (or timeout 300))
-               (values status (char-stream response-stream)))))
+             ;; 流式与非流式采用不同的读取策略:
+             ;; 流式必须拿底层流(:want-stream);非流式若也走 :want-stream,
+             ;; 部分网关(如 GLM,对 Content-Length + Connection: close 响应)
+             ;; 会出现流上读不到数据的问题——让 dexador 自行读完再包成流,
+             ;; 行为与 curl 一致。
+             (if want-stream
+                 (multiple-value-bind (response-stream status)
+                     (dexador:request url
+                                      :method :post
+                                      :headers (append headers '(("Accept-Encoding" . "identity")))
+                                      :content body
+                                      :want-stream t
+                                      :keep-alive nil
+                                      :connect-timeout 10
+                                      :read-timeout (or timeout 300))
+                   (values status (char-stream response-stream)))
+                 (multiple-value-bind (body-string status)
+                     (dexador:request url
+                                      :method :post
+                                      :headers headers
+                                      :content body
+                                      :force-string t
+                                      :keep-alive nil
+                                      :connect-timeout 10
+                                      :read-timeout (or timeout 300))
+                   (values status (make-string-input-stream body-string))))))
       (handler-case (do-request)
+        ;; 注意子句顺序:先匹配 4xx/5xx 条件,再兜底传输异常
         (dexador:http-request-failed (c)
           ;; 非常规路径:Dexador 默认对 4xx/5xx 信号条件;读出响应体后转成
           ;; 与 2xx 相同的返回形态,让上层按状态码决定重试或报错。
@@ -247,7 +275,10 @@ ENV-VAR       API Key 的环境变量名。"
                                      (loop for line = (read-line s nil nil)
                                            while line
                                            do (write-line line sink)))))
-                         (t (princ-to-string b))))))))))))
+                         (t (princ-to-string b)))))))
+        ;; 传输层异常(SSL 截断/连接重置等):统一转为可重试的 transport-error
+        (error (e)
+          (error 'transport-error :message (format nil "网络传输失败:~A" e))))))))
 
 ;;; ---------------------------------------------------------------------------
 ;;; SSE 解析
@@ -256,18 +287,24 @@ ENV-VAR       API Key 的环境变量名。"
 (defun sse-data-lines (stream &key stop-on-done-p)
   "从字符流 STREAM 读取 SSE 事件,按行提取 data: 载荷,返回载荷字符串列表。
 遇到 data: [DONE] 且 STOP-ON-DONE-P 为真时停止读取(流不显式关闭由调用方管理)。
-注释行、event:/id:/retry: 行与空行(事件分隔)均忽略。"
+注释行、event:/id:/retry: 行与空行(事件分隔)均忽略。
+读取中遇到流级错误(服务器不发 close_notify 即断开,OpenSSL 3 会抛截断错误)
+时,返回此前已完整收到的载荷——截断是否可接受由上层解析兜底。"
   (let ((payloads '()))
-    (loop for line = (read-line stream nil nil)
-          while line
-          do (let ((trimmed (string-right-trim '(#\return) line)))
-               (when (>= (length trimmed) 5)
-                 (let ((head (subseq trimmed 0 5)))
-                   (when (string= head "data:")
-                     (let ((payload (string-left-trim " " (subseq trimmed 5))))
-                       (cond ((and stop-on-done-p (string= payload "[DONE]"))
-                              (return-from sse-data-lines (nreverse payloads)))
-                             (t (push payload payloads)))))))))
+    (handler-case
+        (loop for line = (read-line stream nil nil)
+              while line
+              do (let ((trimmed (string-right-trim '(#\return) line)))
+                   (when (>= (length trimmed) 5)
+                     (let ((head (subseq trimmed 0 5)))
+                       (when (string= head "data:")
+                         (let ((payload (string-left-trim " " (subseq trimmed 5))))
+                           (cond ((and stop-on-done-p (string= payload "[DONE]"))
+                                  (return-from sse-data-lines (nreverse payloads)))
+                                 (t (push payload payloads)))))))))
+      (error ()
+        ;; 流在读取中被截断:保留已收到的载荷
+        nil))
     (nreverse payloads)))
 
 ;;; ---------------------------------------------------------------------------
@@ -448,21 +485,30 @@ TEMPERATURE/MAX-TOKENS  覆盖 Provider 默认。
         (url (provider-request-url provider))
         (attempt 0)
         (max-attempts (1+ (max 0 (llm-config-retries provider)))))
-    (labels ((one-attempt ()
-               (cond (stream (chat-streaming provider url headers body on-delta))
+    (labels ((one-attempt (stream-p)
+               (cond (stream-p (chat-streaming provider url headers body on-delta))
                      (t (chat-blocking provider url headers body))))
-             (retry-loop ()
+             (retry-loop (stream-p)
                (loop
-                 (handler-case (return (one-attempt))
-                   (api-error (e)
-                     (let ((status (api-error-status e)))
-                       (if (and (< attempt (1- max-attempts)) (retryable-status-p status))
+                 (handler-case (return (one-attempt stream-p))
+                   ((or api-error transport-error) (e)
+                     (let ((status (when (typep e 'api-error) (api-error-status e))))
+                       (if (and (< attempt (1- max-attempts))
+                                (or (null status) (retryable-status-p status)))
                            (progn
                              (incf attempt)
                              (sleep (* (llm-config-retry-delay provider)
                                        (expt 2 (1- attempt)))))
                            (error e))))))))
-      (retry-loop))))
+      (cond
+        ;; 显式流式:直接走流式重试
+        (stream (retry-loop t))
+        ;; 非流式且关闭降级:仅按非流式重试
+        ((not *degrade-non-stream-to-stream*) (retry-loop nil))
+        ;; 非流式:先按非流式重试;传输层失败时降级为流式重组(返回值等价)
+        (t (handler-case (retry-loop nil)
+             (transport-error ()
+               (retry-loop t))))))))
 
 (defun retryable-status-p (status)
   "判断状态码是否值得重试:请求超时、限流与常见服务端瞬时故障。"
@@ -472,7 +518,8 @@ TEMPERATURE/MAX-TOKENS  覆盖 Provider 默认。
   "流式路径:逐事件重组增量,结束时构造完整的 assistant 消息。"
   (multiple-value-bind (status stream) (call-http-post url headers body t (llm-config-timeout provider))
     (unwind-protect
-         (progn
+         (handler-case
+             (progn
            (unless (<= 200 status 299)
              (error 'api-error :status status
                                :body (read-all-input stream)))
@@ -494,6 +541,12 @@ TEMPERATURE/MAX-TOKENS  覆盖 Provider 默认。
                        (let ((fr (jref choice "finish_reason")))
                          (when (and fr (not (eq fr :null))) (setf finish fr)))))))
                (values (accumulator->message acc) usage finish))))
+           ;; 语义错误(条件体系内)原样上抛交给重试循环;其余(SSL 截断、
+           ;; 连接重置等)转为可重试的 transport-error
+           (llm-error (e) (error e))
+           (error (e)
+             (error 'transport-error
+                    :message (format nil "读取响应流失败:~A" e))))
       (ignore-errors (close stream)))))
 
 (defun deliver-delta (on-delta delta)
@@ -510,21 +563,33 @@ TEMPERATURE/MAX-TOKENS  覆盖 Provider 默认。
   "非流式路径:一次性读取完整响应并解析。"
   (multiple-value-bind (status stream) (call-http-post url headers body nil (llm-config-timeout provider))
     (unwind-protect
-         (progn
+         (handler-case
+             (progn
            (unless (<= 200 status 299)
              (error 'api-error :status status :body (read-all-input stream)))
            (let* ((text (read-all-input stream))
                   (response (parse-json text)))
              (response->triple response)))
+           (llm-error (e) (error e))
+           (error (e)
+             (error 'transport-error
+                    :message (format nil "读取响应失败:~A" e))))
       (ignore-errors (close stream)))))
 
 (defun read-all-input (stream)
-  "读入整个字符流为字符串(用于错误响应与非流式响应)。"
+  "读入整个字符流为字符串(用于错误响应与非流式响应)。
+部分服务器(如 GLM 网关)发完响应后不发 TLS close_notify 直接关闭,
+OpenSSL 3 会在下一次读取时抛出截断错误——此时已到达的数据必须保留,
+故读到数据后遇到流级错误一律按 EOF 处理;数据是否完整交给上层解析校验。"
   (with-output-to-string (sink)
     (let ((buffer (make-string 4096)))
-      (loop for n = (read-sequence buffer stream)
-            while (plusp n)
-            do (write-string buffer sink :end n)))))
+      (handler-case
+          (loop for n = (read-sequence buffer stream)
+                while (plusp n)
+                do (write-string buffer sink :end n))
+        (error ()
+          ;; 流在读取中被截断:返回已读部分,完整性由 JSON 解析兜底
+          nil)))))
 
 (defun chat-sync (provider messages &rest keys &key tools stream on-delta temperature max-tokens)
   "CHAT 的显式同步别名(语义与 CHAT 完全一致,便于与其他并发风格 API 对齐)。"

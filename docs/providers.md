@@ -34,11 +34,14 @@ CL-Harness 使用统一的 **OpenAI 兼容 Chat Completions 协议**接入全部
 | 端点 | `https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions` |
 | 环境变量 | `DASHSCOPE_API_KEY` |
 | 预设默认模型 | `qwen-max` |
-| 其他模型 | `qwen-plus`、`qwen-turbo`、`qwen3-coder-plus` 等 |
+| 其他模型 | `qwen-plus`、`qwen-turbo`、`qwen3.8-flash`、`qwen3-coder-plus` 等 |
 
 ```lisp
-(clh-llm:make-provider :qwen :model "qwen3-coder-plus")
+(clh-llm:make-provider :qwen :model "qwen3.8-flash")
 ```
+
+`qwen3.8-flash` 为思考型模型(默认开启思考),思考内容经 `:reasoning-delta`
+事件交付,不影响正文;已通过完整真机联调(含工具调用循环)。
 
 ## 3. GLM(智谱 BigModel)
 
@@ -47,11 +50,16 @@ CL-Harness 使用统一的 **OpenAI 兼容 Chat Completions 协议**接入全部
 | 端点 | `https://open.bigmodel.cn/api/paas/v4/chat/completions` |
 | 环境变量 | `ZHIPU_API_KEY` |
 | 预设默认模型 | `glm-5.3` |
-| 其他模型 | `glm-5.2`、`glm-4.6` 等 |
+| 其他模型 | `glm-5.3-flash`、`glm-5.2`、`glm-4.6` 等 |
 
 ```lisp
-(clh-llm:make-provider :glm)
+(clh-llm:make-provider :glm :model "glm-5.3-flash")
 ```
+
+`glm-5.3-flash` 为思考型模型(始终思考,不支持关闭),已通过完整真机联调。
+兼容性说明:GLM 网关对「非流式 + Content-Length 响应」在 cl+ssl 流式读取下
+存在已知的截断问题,CL-Harness 已处理——非流式请求改由 dexador 整体读取,
+且传输层失败时自动降级为流式重组(见 CHANGELOG 0.1.1)。
 
 ## 4. OpenAI
 

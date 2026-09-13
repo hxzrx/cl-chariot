@@ -94,6 +94,7 @@ HTTP 传输通过动态变量 *http-post-fn* 注入,便于测试与替换。")
   (:export
    ;; 条件
    #:llm-error
+   #:transport-error
    #:api-error
    #:api-error-status
    #:api-error-body

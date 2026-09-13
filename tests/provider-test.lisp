@@ -236,6 +236,24 @@
               (list (make-user-message "hi")) :stream nil))
       (is (= 1 attempts)))))
 
+(test retry-on-transport-error
+  ;; SSL 截断/连接重置等传输层错误同样走重试
+  (let ((attempts 0))
+    (let ((clh-llm::*http-post-fn*
+            (lambda (url headers body &key want-stream timeout)
+              (declare (ignore url headers body want-stream timeout))
+              (incf attempts)
+              (if (< attempts 2)
+                  (error 'clh-llm:transport-error :message "ssl unexpected eof")
+                  (values 200 (make-string-input-stream
+                               "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"重试成功\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":1,\"total_tokens\":2}}"))))))
+      (multiple-value-bind (msg usage)
+          (chat (make-provider :deepseek :api-key "k" :retries 3 :retry-delay 0)
+                (list (make-user-message "hi")) :stream nil)
+        (is (= 2 attempts))
+        (is (string= "重试成功" (message-content msg)))
+        (is (= 2 (usage-total-tokens usage)))))))
+
 (test retry-exhausted-signals
   ;; 重试耗尽后 API-ERROR 逃逸,且带状态码
   (let ((clh-llm::*http-post-fn*

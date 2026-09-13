@@ -1,8 +1,19 @@
 ;;;; live-test.lisp —— 真机联调测试(默认跳过)
 ;;;;
-;;;; 运行条件:环境变量 CLH_LIVE=1 且提供 API Key(DEEPSEEK_API_KEY)。
-;;;; 用途:验证与真实 DeepSeek 服务的全链路连通(流式、工具调用、多轮循环)。
-;;;; CI 或无网环境下自动跳过,不产生失败。
+;;;; 运行条件:环境变量 CLH_LIVE=1 且提供对应厂商的 API Key。
+;;;;
+;;;; 环境变量:
+;;;;   CLH_LIVE=1                 启用真机套件
+;;;;   CLH_PROVIDER               厂商预设名(deepseek/qwen/glm/openai,默认 deepseek)
+;;;;   CLH_MODEL                  模型名(默认取厂商预设默认值)
+;;;;   CLH_API_KEY                API Key(优先);缺省回退厂商标准环境变量:
+;;;;                              DEEPSEEK_API_KEY / DASHSCOPE_API_KEY / ZHIPU_API_KEY / OPENAI_API_KEY
+;;;;   CLH_LIVE_EXTRA_BODY        可选,JSON 对象文本,合并进请求体(如厂商私有开关)
+;;;;
+;;;; 示例:
+;;;;   CLH_LIVE=1 tests/run.sh                                       # deepseek 默认模型
+;;;;   CLH_LIVE=1 CLH_PROVIDER=qwen CLH_MODEL=qwen3.8-flash tests/run.sh
+;;;;   CLH_LIVE=1 CLH_PROVIDER=glm  CLH_MODEL=glm-5.3-flash  tests/run.sh
 
 (in-package :clh-test)
 
@@ -10,52 +21,77 @@
 (in-suite live-suite)
 
 (defun live-env ()
-  "读取联调环境配置;未启用联调时返回 NIL。
-CLH_LIVE        置 1 启用;
-DEEPSEEK_API_KEY API Key;
-CLH_MODEL        模型名(默认 deepseek-flash,失败自动回退 deepseek-v4-flash)。"
+  "读取联调环境配置;未启用时返回 NIL。
+返回 plist:(:provider 名 :key 密钥 :model 模型名 :fallback 回退模型名-or-NIL :extra-body 请求体-or-NIL)。"
   (when (equal (uiop:getenv "CLH_LIVE") "1")
-    (let ((key (uiop:getenv "DEEPSEEK_API_KEY")))
+    (let* ((provider (intern (string-upcase (or (uiop:getenv "CLH_PROVIDER")
+                                                "deepseek"))
+                             :keyword))
+           (model (or (uiop:getenv "CLH_MODEL")
+                      (clh-llm:provider-default-model provider)))
+           (key (or (uiop:getenv "CLH_API_KEY")
+                    (uiop:getenv (case provider
+                                   (:deepseek "DEEPSEEK_API_KEY")
+                                   (:qwen "DASHSCOPE_API_KEY")
+                                   (:glm "ZHIPU_API_KEY")
+                                   (:openai "OPENAI_API_KEY")
+                                   (t "CLH_API_KEY"))))))
       (when (and key (plusp (length key)))
-        (list :key key
-              :model (or (uiop:getenv "CLH_MODEL") "deepseek-flash"))))))
+        (list :provider provider
+              :key key
+              :model model
+              ;; 仅 deepseek 存在「旧模型名 → 新模型名」的回退场景
+              :fallback (when (eq provider :deepseek) "deepseek-v4-flash")
+              :extra-body (let ((raw (uiop:getenv "CLH_LIVE_EXTRA_BODY")))
+                            (when (and raw (plusp (length raw)))
+                              (ignore-errors (clh-json:parse-json raw)))))))))
 
-(defun live-provider (env model)
-  (make-provider :deepseek :api-key (getf env :key) :model model :retries 1))
+(defun live-provider (env &optional model)
+  "按联调配置构造 Provider。MODEL 覆盖配置中的模型名(用于回退)。"
+  (apply #'clh-llm:make-provider (getf env :provider)
+         :api-key (getf env :key)
+         :model (or model (getf env :model))
+         :retries 1
+         (when (getf env :extra-body)
+           (list :extra-body (getf env :extra-body)))))
 
-(defun try-models (env model candidate-fallback)
-  "依次尝试 MODEL 与回退模型名,返回可用的 provider;全部失败时信号原错误。"
-  (handler-case (progn
-                  (chat (live-provider env model)
-                        (list (make-user-message "ping"))
-                        :stream nil)
-                  (live-provider env model))
-    (api-error (e)
-      (if (and candidate-fallback (/= (api-error-status e) 401))
-          (progn
-            (format t "~&[live] 模型 ~A 不可用(HTTP ~A),改用 ~A~%"
-                    model (api-error-status e) candidate-fallback)
-            (live-provider env candidate-fallback))
-          (error e)))))
+(defun try-models (env)
+  "先按配置模型探测;失败且存在回退模型时改用回退再探测,返回可用 Provider;
+全部失败时信号原错误。"
+  (if (getf env :fallback)
+      (handler-case (progn
+                      (clh-llm:chat (live-provider env)
+                                    (list (make-user-message "ping"))
+                                    :stream nil)
+                      (live-provider env))
+        (clh-llm:api-error (e)
+          (if (/= (clh-llm:api-error-status e) 401)
+              (progn
+                (format t "~&[live] 模型 ~A 不可用(HTTP ~A),改用 ~A~%"
+                        (getf env :model) (clh-llm:api-error-status e)
+                        (getf env :fallback))
+                (live-provider env (getf env :fallback)))
+              (error e))))
+      (live-provider env)))
 
 (test live-chat-non-stream
   (let ((env (live-env)))
-    (when (null env) (skip "未启用真机联调(C LH_LIVE≠1)"))
-    (let ((provider (try-models env (getf env :model) "deepseek-v4-flash")))
+    (when (null env) (skip "未启用真机联调(CLH_LIVE≠1)"))
+    (let ((provider (try-models env)))
       (multiple-value-bind (msg usage finish)
-          (chat provider (list (make-user-message "只回复两个字:你好")) :stream nil)
+          (clh-llm:chat provider (list (make-user-message "只回复两个字:你好")) :stream nil)
         (is (string= "stop" finish))
-        (is (> (usage-total-tokens usage) 0))
-        (is (plusp (length (message-content msg))))))))
+        (is (> (clh-llm:usage-total-tokens usage) 0))
+        (is (plusp (length (clh-msg:message-content msg))))))))
 
 (test live-chat-stream
   (let ((env (live-env)))
     (when (null env) (skip "未启用真机联调"))
-    (let* ((provider (try-models env (getf env :model) "deepseek-v4-flash"))
+    (let* ((provider (try-models env))
            (chunks 0)
            (text (make-string-output-stream)))
       (multiple-value-bind (msg usage finish)
-          (chat provider (list (make-user-message "用一句话解释什么是 agent harness"))
+          (clh-llm:chat provider (list (make-user-message "用一句话解释什么是 agent harness"))
                 :stream t
                 ;; 只统计正文增量;思考型模型还会下发 :REASONING 增量,不计入正文
                 :on-delta (lambda (kind str)
@@ -64,10 +100,10 @@ CLH_MODEL        模型名(默认 deepseek-flash,失败自动回退 deepseek-v4-
                               (write-string str text))))
         (is (string= "stop" finish))
         (is (> chunks 1))                        ; 确实是流式多片段
-        (is (> (usage-total-tokens usage) 0))
+        (is (> (clh-llm:usage-total-tokens usage) 0))
         ;; 增量拼接与最终消息一致
         (is (string= (get-output-stream-string text)
-                     (message-content msg)))))))
+                     (clh-msg:message-content msg)))))))
 
 (test live-agent-tool-loop
   ;; 全链路:模型读文件并回答内容 —— 真机上的完整 harness 循环
@@ -81,7 +117,7 @@ CLH_MODEL        模型名(默认 deepseek-flash,失败自动回退 deepseek-v4-
         (write-line "alpha" o)
         (write-line "Xk9Qz7" o))
       (let ((agent (make-agent
-                    :provider (try-models env (getf env :model) "deepseek-v4-flash")
+                    :provider (try-models env)
                     :tools +builtin-tools+
                     :permission-mode :yolo
                     :max-turns 6)))
