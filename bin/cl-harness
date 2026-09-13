@@ -1,0 +1,14 @@
+#!/bin/sh
+# CL-Harness 命令行入口(SBCL)
+# 用法:bin/cl-harness [选项] [提示词]   详见 --help
+set -e
+cd "$(dirname "$0")/.."
+# 通过环境变量把 shell 参数透传给 Lisp 进程(以 ASCII 0x1F 分隔)
+CLH_ARGV=""
+for arg in "$@"; do
+  CLH_ARGV="$CLH_ARGV$(printf '%s\037' "$arg")"
+done
+export CLH_ARGV
+exec sbcl --noinform --non-interactive \
+     --eval "(progn (require :asdf) (load \"~/quicklisp/setup.lisp\") (asdf:load-system :cl-harness/cli))" \
+     --eval "(let ((code (clh-cli:main (clh-cli:argv-from-env)))) (uiop:quit (if (numberp code) code 0)))"
