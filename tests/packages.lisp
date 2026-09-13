@@ -31,11 +31,32 @@
    #:build-chat-body #:response->triple #:make-accumulator #:acc-apply-delta
    #:accumulator->message #:accumulator->tool-calls)
   (:import-from :clh-tools
-   #:tool #:tool-p #:make-tool #:tool-name #:tool-description #:tool-readonly-p
-   #:tool-parameters #:tool-handler #:define-tool #:tool-json-schema
+   #:tool #:tool-p #:make-tool #:make-tool* #:tool-name #:tool-description #:tool-readonly-p
+   #:tool-parameters #:tool-schema #:tool-handler #:define-tool #:tool-json-schema
+   #:tool-parameters-schema
    #:find-tool #:execute-tool #:tool-error #:validate-tool-args
    #:args-missing-required #:tools-by-names #:+builtin-tools+
    #:builtin-tool-names #:glob->regex)
+  (:import-from :clh-mcp
+   #:mcp-error #:mcp-error-code #:mcp-error-message #:mcp-timeout
+   #:mcp-connection-error
+   #:+mcp-protocol-version+ #:+mcp-supported-versions+
+   #:protocol-version-supported-p
+   #:make-jsonrpc-request #:make-jsonrpc-notification
+   #:make-jsonrpc-success-response #:make-jsonrpc-error-response
+   #:make-jsonrpc-error-object #:classify-jsonrpc-message
+   #:+jsonrpc-parse-error+ #:+jsonrpc-invalid-request+
+   #:+jsonrpc-method-not-found+ #:+jsonrpc-invalid-params+
+   #:+jsonrpc-internal-error+
+   #:mcp-client #:mcp-client-p #:make-mcp-client
+   #:mcp-client-name #:mcp-client-command #:mcp-client-argv
+   #:mcp-client-server-info #:mcp-client-server-name
+   #:mcp-client-server-capabilities #:mcp-client-instructions
+   #:mcp-client-negotiated-version #:mcp-client-initialized-p
+   #:mcp-client-closed-p #:mcp-client-stderr-log
+   #:initialize #:mcp-ping #:list-tools #:call-tool #:close-mcp-client
+   #:register-request-handler
+   #:mcp-bridged-name #:mcp-content-text #:mcp-tools-from-server)
   (:import-from :clh-agent
    #:agent #:make-agent #:run-result
    #:result-messages #:result-text #:result-usage #:result-stop-reason

@@ -10,7 +10,8 @@ CL-Harness 有两种消费方式,**共享同一条事件流**:
 宿主程序 ──┐
            ├──> cl-harness/agent (主循环) ──> cl-harness/llm ──> 模型 API
 CLI ───────┘        │
-                    └──> cl-harness/tools ──> 宿主机(文件/进程/网络)
+                    ├──> cl-harness/tools ──> 宿主机(文件/进程/网络)
+                    └──> cl-harness/mcp ──> MCP 服务器(stdio 子进程)
 ```
 
 库层(`cl-harness/agent` 及以下)不依赖任何终端概念;CLI 只是事件流的
@@ -95,7 +96,30 @@ CLI ───────┘        │
 - **会话**:JSONL 追加写;加载容忍损坏行(崩溃尾部);`session-messages`
   还原出的消息序列可直接作为 `run` 的 `:messages` 续跑。
 
-### 2.5 `cl-harness`(伞形)与 `cl-harness/cli`
+### 2.5 `cl-harness/mcp` —— MCP 客户端(stdio)
+
+接入 Model Context Protocol 服务器(协议版本 2025-06-18,握手协商),依赖
+base/tools/uiop/bordeaux-threads,**不引入 HTTP 客户端**:
+
+- **帧层纯函数**(`mcp-jsonrpc`):JSON-RPC 2.0 构造/分派、错误码、条件体系;
+- **客户端**(`mcp-client`):子进程 + 三个后台线程(写/读/stderr 排空),
+  id 配对等待注册表,逐请求超时与取消通知;
+- **桥接**(`mcp-tools`):tools/list 结果经 `make-tool*` 零损失携带现成
+  inputSchema,tools/call 结果的 content 块拼接为文本回喂。
+
+三个踩坑记录(跨实现可移植性的实际代价):
+  1. `bt:condition-wait` 的超时在 SBCL/CCL 都生效但**返回值语义不一致**
+     (超时后 SBCL 为 NIL、CCL 为 T)——等待一律以 deadline 判定,忽略返回值;
+  2. CCL 的流属于「首个使用的进程」,多线程直写 stdin 报 stream-is-private
+     ——所有出站帧收敛到客户端专属**写线程**;
+  3. Linux 上 `close` 不唤醒阻塞中的 `read`:在读取线程仍阻塞时关闭流会产生
+     僵尸线程,窃取后续复用同号 fd 的数据并卡死进程——收场必须「先杀进程、
+     等线程 EOF 退出、最后关流」。
+
+未做:HTTP 传输、sampling/roots/elicitation(未注册的服务端请求回 -32601)、
+resources/prompts 封装。详见 [mcp.md](mcp.md)。
+
+### 2.6 `cl-harness`(伞形)与 `cl-harness/cli`
 
 - 伞形包重新导出各层稳定 API,并提供 `make-subagent-tool`:
   把「受限工具集 + 独立上下文 + 轮数上限」的子智能体封装成一个普通工具,

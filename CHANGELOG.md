@@ -1,5 +1,39 @@
 # 更新日志
 
+## [0.2.0] - 2026-09-13
+
+### 新增
+- **MCP 客户端(`cl-harness/mcp`,包 `clh-mcp`)**:经 stdio 传输接入
+  Model Context Protocol 服务器,协议版本 2025-06-18(initialize 握手
+  版本协商,向下兼容接受 2025-03-26 / 2024-11-05)。
+  - JSON-RPC 2.0 帧层:换行分隔消息的构造/分派为纯函数,错误码与
+    `mcp-error` / `mcp-timeout` / `mcp-connection-error` 条件体系;
+  - 客户端连接:子进程管理(二进制流 + flexi-streams 强制 UTF-8,不依赖
+    locale)、写/读/stderr 排空三个后台线程、按 id 配对的等待注册表、
+    逐请求超时(默认 30s,超时发 `notifications/cancelled` 取消通知)、
+    服务器意外退出收场;`tools/list` 自动翻页聚合与缓存
+    (`notifications/tools/list_changed` 失效),`ping`、未注册的服务端
+    请求(sampling/roots 等)按规范回 -32601;
+  - 工具桥接:`mcp-tools-from-server` 把 MCP 工具转换为本地工具对象——
+    名字 `mcp__<server>__<tool>` 前缀防冲突,`inputSchema` 零损失携带,
+    `annotations.readOnlyHint` 映射只读分级,`isError`/协议错误转为
+    可回喂模型的 `tool-error`。
+- **tools 层小扩展(向后兼容)**:`make-tool*` 支持直接携带现成 JSON
+  Schema(`schema` 槽),必填参数校验从 Schema 的 `required` 推导;
+  `make-tool` 既有用法不受影响。
+- **离线端到端演示**:`examples/mcp-demo.lisp`(脚本化假模型 + 真实假
+  MCP 服务器,无需 API Key),`sbcl --script examples/mcp-demo.lisp` 即可运行。
+- 测试:MCP 套件 160 项断言(帧层纯函数、裸客户端分派、真实子进程 stdio
+  回路:握手协商/翻页缓存/isError/超时取消/乱序与并发 id 配对/进程意外
+  退出/服务器请求应答/桥接端到端/智能体主循环集成),离线全量达到
+  543 项;`tests/fake-mcp-server.py` 为自带的假 MCP 服务器(python3)。
+- 文档:`docs/mcp.md`;README 特性表与用法;架构文档补 MCP 分层与三条
+  跨实现踩坑记录。
+
+### 兼容性说明
+- MCP 核心工作不依赖任何 LLM API Key;未做范围:HTTP 传输、
+  sampling/roots/elicitation 服务端→客户端能力、resources/prompts 封装。
+
 ## [0.1.1] - 2026-09-13
 
 ### 修复

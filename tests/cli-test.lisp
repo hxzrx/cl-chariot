@@ -44,4 +44,4 @@
   ;; 伞形包统一入口可用
   (is (member :deepseek (clh:provider-preset-names)))
   (is (string= "bash" (first (clh:builtin-tool-names))))
-  (is (string= "0.1.0" clh:+version+)))
+  (is (string= "0.2.0" clh:+version+)))

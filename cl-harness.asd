@@ -10,6 +10,7 @@
 ;;;;   cl-harness/llm    —— 多厂商 Provider 层:SSE 流式、重试、用量记账
 ;;;;   cl-harness/tools  —— 工具系统:define-tool、内置工具(bash/read/write/edit/glob/grep/web-fetch)
 ;;;;   cl-harness/agent  —— 智能体主循环、上下文裁剪、审批策略、会话持久化
+;;;;   cl-harness/mcp    —— MCP 客户端:stdio 传输接入 MCP 服务器、工具桥接
 ;;;;   cl-harness        —— 伞形系统:统一导出 API + 子智能体(Subagent)工具
 ;;;;   cl-harness/cli    —— 命令行前端(REPL 与一次性执行)
 ;;;;   cl-harness/test   —— FiveAM 测试套件
@@ -60,6 +61,17 @@
                (:file "session")
                (:file "agent")))
 
+(defsystem "cl-harness/mcp"
+  :description "CL-Harness MCP 客户端:stdio 传输、工具桥接(协议版本 2025-06-18)"
+  :depends-on ("uiop" "bordeaux-threads" "flexi-streams"
+               "cl-harness/base" "cl-harness/tools")
+  :pathname "src/"
+  :serial t
+  :components ((:file "packages")
+               (:file "mcp-jsonrpc")
+               (:file "mcp-client")
+               (:file "mcp-tools")))
+
 (defsystem "cl-harness"
   :description "CL-Harness 伞形系统:统一导出 API 与子智能体工具"
   :depends-on ("cl-harness/agent")
@@ -78,7 +90,7 @@
 
 (defsystem "cl-harness/test"
   :description "CL-Harness 测试套件(FiveAM)"
-  :depends-on ("uiop" "fiveam" "cl-harness/cli")
+  :depends-on ("uiop" "fiveam" "cl-harness/cli" "cl-harness/mcp")
   :pathname "tests/"
   :serial t
   :components ((:file "packages")
@@ -88,6 +100,7 @@
                (:file "provider-test")
                (:file "tool-test")
                (:file "agent-test")
+               (:file "mcp-test")
                (:file "session-test")
                (:file "cli-test")
                (:file "live-test")

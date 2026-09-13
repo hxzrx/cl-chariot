@@ -5,6 +5,9 @@
 ;;;;   description  描述(会进入模型可见的 JSON Schema,写清楚用途与行为约束);
 ;;;;   parameters   参数规约列表,每项为 (名称 类型 描述 [:required] [:enum (...)]),
 ;;;;                由 TOOL-JSON-SCHEMA 编译为标准 JSON Schema;
+;;;;   schema       现成的 parameters JSON Schema(:OBJ 形态,如 MCP 工具自带的
+;;;;                inputSchema);非 NIL 时优先于 PARAMETERS(经 MAKE-TOOL* 构造),
+;;;;                避免双向转换造成信息损失;
 ;;;;   readonly-p   是否只读(只读工具在默认审批模式下自动放行,且可并行执行);
 ;;;;   timeout      超时秒数(供执行器参考);
 ;;;;   handler      处理函数 (LAMBDA (ARGS)) → 结果字符串;
@@ -43,6 +46,7 @@
   (name "" :type string)
   (description "" :type string)
   (parameters '() :type list)
+  (schema nil)
   (readonly-p nil)
   (timeout 120)
   (handler (lambda (args) (declare (ignore args)) "") :type function))
@@ -56,6 +60,19 @@ HANDLER 可省略(仅供 schema 校验场景);省略时执行返回空串。"
   (check-type name string)
   (check-type description string)
   (%make-tool :name name :description description :parameters parameters
+              :readonly-p readonly-p :timeout timeout
+              :handler (or handler (lambda (args) (declare (ignore args)) ""))))
+
+(defun make-tool* (&key name description schema (readonly-p nil) (timeout 120) handler)
+  "构造「直接携带现成 parameters JSON Schema」的工具,适用外部协议桥接场景
+(如 MCP 工具的 inputSchema):SCHEMA 为 {\"type\":\"object\", ...} 形态的 :OBJ,
+会由 TOOL-JSON-SCHEMA 原样下发,不做任何有损转换;必填参数校验亦从 Schema 的
+\"required\" 数组推导。其余参数语义与 MAKE-TOOL 一致。
+SCHEMA 不是合法 :OBJ 对象时按空对象处理(等价无参数)。"
+  (check-type name string)
+  (check-type description string)
+  (%make-tool :name name :description description :parameters '()
+              :schema (if (jobj-alist schema) schema '(:obj))
               :readonly-p readonly-p :timeout timeout
               :handler (or handler (lambda (args) (declare (ignore args)) ""))))
 
@@ -101,7 +118,12 @@ HANDLER 可省略(仅供 schema 校验场景);省略时执行返回空串。"
 
 (defun tool-parameters-schema (tool)
   "生成工具的 parameters JSON Schema 部分:
-   {\"type\":\"object\",\"properties\":{...},\"required\":[...]}"
+   {\"type\":\"object\",\"properties\":{...},\"required\":[...]}
+若工具携带现成 Schema(MAKE-TOOL* 构造),则原样返回之,不重新编译。"
+  (or (tool-schema tool) (%compile-parameters-schema tool)))
+
+(defun %compile-parameters-schema (tool)
+  "把参数规约列表编译为 JSON Schema(MAKE-TOOL 路径)。"
   (let ((props
           (mapcar (lambda (spec)
                     (unless (param-spec-p spec)
@@ -130,11 +152,20 @@ HANDLER 可省略(仅供 schema 校验场景);省略时执行返回空串。"
 (defparameter %no-arg% '%clh-tools-no-arg% "参数缺失校验的内部哨兵。")
 
 (defun args-missing-required (tool args)
-  "返回 ARGS(:OBJ)缺失的必填参数名列表。纯函数。"
-  (loop for spec in (tool-parameters tool)
-        when (and (param-required-p spec)
-                  (eq (jref args (first spec) %no-arg%) %no-arg%))
-          collect (first spec)))
+  "返回 ARGS(:OBJ)缺失的必填参数名列表。纯函数。
+携带现成 Schema 的工具从 Schema 的 \"required\" 数组推导;
+否则按参数规约的 :required 标记推导。"
+  (let ((schema (tool-schema tool)))
+    (if (jobj-alist schema)
+        (let ((required (jref schema "required")))
+          (loop for name in (and (consp required) required)
+                when (and (stringp name)
+                          (eq (jref args name %no-arg%) %no-arg%))
+                  collect name))
+        (loop for spec in (tool-parameters tool)
+              when (and (param-required-p spec)
+                        (eq (jref args (first spec) %no-arg%) %no-arg%))
+                collect (first spec)))))
 
 (defun validate-tool-args (tool args)
   "校验参数对象 ARGS:缺失必填参数时返回缺失名列表,合法则返回 NIL。"

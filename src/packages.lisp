@@ -146,7 +146,9 @@ HTTP 传输通过动态变量 *http-post-fn* 注入,便于测试与替换。")
    #:tool
    #:tool-p
    #:make-tool
+   #:make-tool*
    #:tool-name
+   #:tool-schema
    #:tool-description
    #:tool-readonly-p
    #:tool-parameters
@@ -155,6 +157,7 @@ HTTP 传输通过动态变量 *http-post-fn* 注入,便于测试与替换。")
    #:define-tool
    ;; Schema 与执行
    #:tool-json-schema
+   #:tool-parameters-schema
    #:find-tool
    #:execute-tool
    #:validate-tool-args
@@ -213,6 +216,70 @@ HTTP 传输通过动态变量 *http-post-fn* 注入,便于测试与替换。")
    #:session-append
    #:session-load
    #:session-messages))
+
+(defpackage :clh-mcp
+  (:documentation
+   "CL-Harness MCP 客户端层:经 stdio 传输接入 Model Context Protocol 服务器,
+并把服务器提供的 tools 无损桥接为 CL-Harness 工具对象。
+   - JSON-RPC 2.0 帧:换行分隔、UTF-8;构造与分派为纯函数(mcp-jsonrpc);
+   - 客户端连接:子进程管理、后台读取线程、按 id 配对的等待注册表、
+     逐请求超时与取消通知(mcp-client);
+   - 工具桥接:tools/list 结果直接携带现成 JSON Schema(经 CLH-TOOLS:MAKE-TOOL*
+     零损失构造),tools/call 结果的 content 块拼接为文本(mcp-tools)。
+未做范围:HTTP/SSE 传输、sampling/roots/elicitation 等服务端→客户端能力
+(收到未支持的请求时按规范回 -32601 method-not-found)、resources/prompts。")
+  (:use :cl :clh-util :clh-json :clh-tools)
+  (:export
+   ;; 条件
+   #:mcp-error
+   #:mcp-error-message
+   #:mcp-error-code
+   #:mcp-error-data
+   #:mcp-timeout
+   #:mcp-connection-error
+   ;; 协议版本
+   #:+mcp-protocol-version+
+   #:+mcp-supported-versions+
+   #:protocol-version-supported-p
+   ;; JSON-RPC 2.0 帧
+   #:make-jsonrpc-request
+   #:make-jsonrpc-notification
+   #:make-jsonrpc-success-response
+   #:make-jsonrpc-error-response
+   #:make-jsonrpc-error-object
+   #:classify-jsonrpc-message
+   #:+jsonrpc-parse-error+
+   #:+jsonrpc-invalid-request+
+   #:+jsonrpc-method-not-found+
+   #:+jsonrpc-invalid-params+
+   #:+jsonrpc-internal-error+
+   ;; 客户端
+   #:mcp-client
+   #:mcp-client-p
+   #:make-mcp-client
+   #:mcp-client-name
+   #:mcp-client-command
+   #:mcp-client-argv
+   #:mcp-client-server-info
+   #:mcp-client-server-name
+   #:mcp-client-server-capabilities
+   #:mcp-client-instructions
+   #:mcp-client-negotiated-version
+   #:mcp-client-initialized-p
+   #:mcp-client-closed-p
+   #:mcp-client-stderr-log
+   #:initialize
+   #:mcp-ping
+   #:list-tools
+   #:call-tool
+   #:close-mcp-client
+   #:register-request-handler
+   #:*mcp-spawn-fn*
+   #:*mcp-default-timeout*
+   ;; 工具桥接
+   #:mcp-bridged-name
+   #:mcp-content-text
+   #:mcp-tools-from-server))
 
 (defpackage :clh
   (:documentation
