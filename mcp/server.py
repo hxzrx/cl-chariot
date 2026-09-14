@@ -43,6 +43,7 @@ import time
 import typing
 
 from mcp.server.fastmcp import Context, FastMCP, Image
+from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import (
     CreateMessageRequest,
     CreateMessageRequestParams,
@@ -60,6 +61,28 @@ MCP_PORT = int(os.environ.get("MCP_PORT", "8765"))
 # 公网部署必须设置;未设置时仅在监听地址为回环地址时允许启动
 MCP_BEARER_TOKEN = os.environ.get("MCP_BEARER_TOKEN", "").strip()
 MCP_STREAM_PATH = os.environ.get("MCP_STREAM_PATH", "/mcp")
+
+# Host 头白名单(SDK 的 DNS 重绑定防护):经 nginx 反代后,后端收到的
+# Host 是外部域名(如 cantos.cn),不在白名单会被 SDK 以 421 拒绝。
+# MCP_ALLOWED_HOSTS 是在本机白名单(localhost/127.0.0.1)之上的**附加项**,
+# 生产部署必须设置,如 MCP_ALLOWED_HOSTS=cantos.cn(多个用逗号分隔;
+# 每个 host 会自动附带「host:*」通配端口形态)。
+def _expand_hosts(hosts):
+    """把每个 host 展开为 [host, host:*](SDK 支持通配端口形态)。"""
+    expanded = []
+    for host in hosts:
+        expanded.append(host)
+        if not host.endswith(":*"):
+            expanded.append(host + ":*")
+    return expanded
+
+
+MCP_ALLOWED_HOSTS = _expand_hosts(["localhost", "127.0.0.1"]) + [
+    host.strip()
+    for host in os.environ.get("MCP_ALLOWED_HOSTS", "").split(",")
+    if host.strip()
+]
+
 
 if not MCP_BEARER_TOKEN and MCP_HOST not in ("127.0.0.1", "localhost", "::1"):
     raise SystemExit(
@@ -109,6 +132,13 @@ mcp = FastMCP(
     name="cl-harness-test",
     instructions="CL-Harness MCP 联调测试服务器:工具均为刻意简单的测试桩,"
     "用于验证握手、工具调用、超时、内容块与能力协商等客户端行为。",
+)
+# DNS 重绑定防护:校验 Host/Origin 头(防恶意网页借浏览器打内网端点)。
+# 1.30 的构造函数不暴露该配置,在会话管理器创建前(settings 惰性读取)赋值:
+# 生产域名经 MCP_ALLOWED_HOSTS 放行;非浏览器客户端不带 Origin,天然通过。
+mcp.settings.transport_security = TransportSecuritySettings(
+    enable_dns_rebinding_protection=True,
+    allowed_hosts=_expand_hosts(MCP_ALLOWED_HOSTS),
 )
 
 
@@ -293,7 +323,8 @@ def main():
 
     app = BearerTokenMiddleware(mcp.streamable_http_app())
     print(f"cl-harness-test MCP server: http://{MCP_HOST}:{MCP_PORT}{MCP_STREAM_PATH} "
-          f"(auth={'on' if MCP_BEARER_TOKEN else 'OFF(仅限本机自测)'})")
+          f"(auth={'on' if MCP_BEARER_TOKEN else 'OFF(仅限本机自测)'}, "
+          f"allowed-hosts={','.join(MCP_ALLOWED_HOSTS)})")
     # 单 worker:有状态会话保存在进程内存,不能多进程分片
     uvicorn.run(app, host=MCP_HOST, port=MCP_PORT, log_level="info", workers=1)
 

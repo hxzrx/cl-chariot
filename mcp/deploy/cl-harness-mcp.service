@@ -24,6 +24,9 @@ WorkingDirectory=/opt/cl-harness-mcp
 EnvironmentFile=/etc/cl-harness-mcp.env
 Environment=MCP_HOST=127.0.0.1
 Environment=MCP_PORT=8765
+# 必须放行外部域名:SDK 的 DNS 重绑定防护会校验 Host 头,经 nginx 反代后
+# 后端收到的 Host 是 cantos.cn,不在白名单会被 421 拒绝(可多个,逗号分隔)
+Environment=MCP_ALLOWED_HOSTS=cantos.cn
 ExecStart=/opt/cl-harness-mcp/venv/bin/python server.py
 Restart=on-failure
 RestartSec=3

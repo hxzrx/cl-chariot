@@ -56,9 +56,16 @@ venv/bin/python3 smoke_test.py http://127.0.0.1:8765/mcp dev-token
    ```
 2. **生成鉴权 token**(公网部署必须;泄露后换一个重启即可):
    ```bash
-   sudo sh -c 'echo MCP_BEARER_TOKEN=$(openssl rand -hex 32) \
-     > /etc/cl-harness-mcp.env && chmod 600 /etc/cl-harness-mcp.env'
+   sudo sh -c 'cat > /etc/cl-harness-mcp.env <<EOF
+   MCP_BEARER_TOKEN=$(openssl rand -hex 32)
+   MCP_ALLOWED_HOSTS=cantos.cn
+   EOF
+   chmod 600 /etc/cl-harness-mcp.env'
    ```
+   `MCP_ALLOWED_HOSTS` 是 SDK 防DNS重绑定的 **Host 头白名单附加项**:经
+   nginx 反代后,后端收到的 Host 是 `cantos.cn`,不放行会被 SDK 以
+   **421 "Invalid Host header"** 拒绝(本机 localhost/127.0.0.1 始终放行,
+   不受影响)。env 文件内不要写 `export` 前缀、不要加引号。
 3. **systemd 托管**:按 `deploy/cl-harness-mcp.service` 内注释安装
    (替换 `<运行用户>` 占位),`enable --now` 后确认 `systemctl status`
    与 `journalctl -u cl-harness-mcp` 正常。服务器只监听 `127.0.0.1:8765`。
@@ -102,6 +109,9 @@ token 错误时先查这里。)
 - **协议协商**:客户端请求 `2025-06-18`,服务器原样回应同一版本(SDK 1.30
   支持向下协商;冒烟时它对自家 SDK 客户端则回应更新的 `2025-11-25`——
   以客户端请求为准的协商行为已用原始请求验证);
+- **Host 头白名单**:SDK 默认开启 DNS 重绑定防护,Host 不在
+  `MCP_ALLOWED_HOSTS` 时回 **421 "Invalid Host header"**——若收到 421,
+  先检查服务器 env 里的白名单是否含外部域名并确认进程已重启加载;
 - **响应是 SSE 帧**:POST 的响应为 `text/event-stream`(`event: message` +
   `data: {JSON}` 行),客户端必须支持,而不是假定 `application/json`;
 - **有状态会话**:initialize 响应带 `mcp-session-id` 头,后续请求必须带回;
