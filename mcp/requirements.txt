@@ -1,6 +1,7 @@
 # CL-Harness 联调用 FastMCP 测试服务器依赖
 # 注意:固定 mcp 1.x —— 官方 SDK 2.x 已把 FastMCP 更名为 MCPServer(接口变动),
 # 本服务器按用户要求基于 FastMCP 编写,故锁定 1.x 稳定线(已在 1.30.0 上验证)。
-"mcp>=1.9,<2"
+# (requirements 文件内不能带引号——引号仅用于命令行 shell 转义)
+mcp>=1.9,<2
 # Streamable HTTP 应用服务器(mcp[cli] 也会带上,显式声明以便单独部署)
 uvicorn>=0.30
