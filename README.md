@@ -95,7 +95,19 @@ bin/cl-harness -P deepseek -m deepseek-v4-flash "用一句话介绍你自己"
 bin/cl-harness -P glm --permission default
 ```
 
-REPL 内置斜杠命令:`/help` `/tools` `/model NAME` `/provider NAME` `/usage` `/clear` `/system TEXT` `/quit`。
+REPL 内置斜杠命令:`/help` `/tools` `/mcp` `/model NAME` `/provider NAME` `/usage` `/clear` `/system TEXT` `/quit`。
+
+#### 接入 MCP 服务器(`--mcp`)
+
+```bash
+# stdio:本地子进程(参数以 + 分隔)
+bin/cl-harness --mcp "fs=npx+-y+@modelcontextprotocol/server-filesystem+/tmp" "……"
+# Streamable HTTP:远程端点(第二个 + 后为 Bearer token)
+bin/cl-harness --mcp "cantos=@https://cantos.cn/mcp+<token>" "……"
+```
+
+启动时自动握手并把 MCP 工具桥接为本地工具(与内置工具同等参与审批);
+REPL 中用 `/mcp` 查看服务器状态、`/tools` 查看全部工具。详见 [docs/mcp.md](docs/mcp.md)。
 
 ### 3. 运行演示项目
 

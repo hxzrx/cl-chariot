@@ -1,5 +1,15 @@
 # 更新日志
 
+## [Unreleased]
+
+### 新增
+- **CLI 集成 MCP 服务器(`--mcp`)**:命令行与 REPL 零代码接入 MCP 服务器。
+  SPEC 支持 stdio(`NAME=CMD[+ARG…]`)与 Streamable HTTP
+  (`NAME=@URL[+TOKEN]`,Bearer 鉴权)两种形式,可多次传入接入多台;
+  启动时自动握手并桥接工具(与内置工具同等参与审批),单台失败跳过不
+  影响整体;REPL 新增 `/mcp` 命令(服务器状态)、`/tools` 合并显示全部
+  工具;退出时统一关闭全部 MCP 会话。
+
 ## [0.3.0] - 2026-09-14
 
 ### 变更

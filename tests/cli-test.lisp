@@ -45,3 +45,79 @@
   (is (member :deepseek (clh:provider-preset-names)))
   (is (string= "bash" (first (clh:builtin-tool-names))))
   (is (string= "0.3.0" clh:+version+)))
+
+;;; ---------- MCP 接入(--mcp) ----------
+
+(test parse-mcp-spec-stdio
+  (let ((p (parse-mcp-spec "fake=python3+server.py+--verbose")))
+    (is (eq :stdio (getf p :kind)))
+    (is (string= "fake" (getf p :name)))
+    (is (string= "python3" (getf p :command)))
+    (is (equal '("server.py" "--verbose") (getf p :argv))))
+  ;; 空片段忽略;唯一片段即命令
+  (let ((p (parse-mcp-spec "a=cmd+")))
+    (is (string= "cmd" (getf p :command)))
+    (is (null (getf p :argv)))))
+
+(test parse-mcp-spec-http
+  (let ((p (parse-mcp-spec "cantos=@https://cantos.cn/mcp+tok123")))
+    (is (eq :http (getf p :kind)))
+    (is (string= "cantos" (getf p :name)))
+    (is (string= "https://cantos.cn/mcp" (getf p :url)))
+    (is (string= "tok123" (getf p :api-key))))
+  (let ((p (parse-mcp-spec "plain=@https://x/mcp")))
+    (is (string= "https://x/mcp" (getf p :url)))
+    (is (null (getf p :api-key)))))
+
+(test parse-mcp-spec-rejects-garbage
+  (signals error (parse-mcp-spec "no-equals-sign"))
+  (signals error (parse-mcp-spec "=no-name"))
+  (signals error (parse-mcp-spec "name="))
+  (signals error (parse-mcp-spec "a=@missing-scheme"))
+  (signals error (parse-mcp-spec "a=@u+token+extra")))
+
+(test parse-args-mcp-repeatable
+  (let ((opts (parse-args (list "--mcp" "a=ls" "--mcp" "b=@http://x/mcp" "任务"))))
+    (is (equal '("a=ls" "b=@http://x/mcp") (getf opts :mcp-specs)))
+    (is (string= "任务" (getf opts :prompt)))))
+
+(test start-mcp-servers-stdio-integration
+  (let ((script (uiop:native-namestring
+                 (merge-pathnames "fake-mcp-server.py"
+                                  (asdf:component-pathname (asdf:find-system :cl-harness/test))))))
+    (multiple-value-bind (clients tools)
+        (let ((*standard-output* (make-string-output-stream)))
+          (start-mcp-servers (list (format nil "fake=python3+~A" script))))
+      (unwind-protect
+           (progn
+             (is (= 1 (length clients)))
+             (is (> (length tools) 0))
+             (is (not (null (find "mcp__fake__echo" tools
+                                  :key #'tool-name :test #'string=)))))
+        (clh-mcp:close-mcp-client (first clients))))))
+
+(test start-mcp-servers-skips-broken
+  (multiple-value-bind (clients tools)
+      (let ((*standard-output* (make-string-output-stream)))
+        (start-mcp-servers (list "bad=nonexistent-cmd-xyz" "also-bad")))
+    (is (null clients))
+    (is (null tools))))
+
+(test slash-mcp-command-output
+  (let ((script (uiop:native-namestring
+                 (merge-pathnames "fake-mcp-server.py"
+                                  (asdf:component-pathname (asdf:find-system :cl-harness/test))))))
+    (multiple-value-bind (clients tools)
+        (let ((*standard-output* (make-string-output-stream)))
+          (start-mcp-servers (list (format nil "fake=python3+~A" script))))
+      (unwind-protect
+           (let ((out (make-string-output-stream)))
+             (let ((*standard-output* out))
+               (clh-cli::handle-slash-command "/mcp" :mcp-ref (lambda () (values clients tools)))
+               (clh-cli::handle-slash-command "/tools" :mcp-ref (lambda () (values clients tools))))
+             (let ((text (get-output-stream-string out)))
+               (is (search "fake" text))
+               (is (search "STDIO" text))
+               (is (search "2025-" text))
+               (is (search "mcp__fake__echo" text))))
+        (clh-mcp:close-mcp-client (first clients))))))

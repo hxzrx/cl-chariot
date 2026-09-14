@@ -261,6 +261,7 @@ HTTP 的 GET 长监听流、OAuth 2.1。")
    #:make-mcp-client
    #:make-mcp-http-client
    #:mcp-client-name
+   #:mcp-client-transport
    #:mcp-client-command
    #:mcp-client-argv
    #:mcp-client-server-info
@@ -354,9 +355,20 @@ HTTP 的 GET 长监听流、OAuth 2.1。")
    #:result-text #:result-usage #:result-stop-reason #:result-turns)
   (:import-from :clh
    #:make-subagent-tool)
+  (:import-from :clh-mcp
+   #:make-mcp-client
+   #:make-mcp-http-client
+   #:initialize
+   #:mcp-tools-from-server
+   #:close-mcp-client
+   #:mcp-client-name
+   #:mcp-client-transport
+   #:mcp-client-negotiated-version)
   (:export
    #:main
    #:argv-from-env
    #:+cli-version+
    #:run-oneshot
-   #:run-repl))
+   #:run-repl
+   #:parse-mcp-spec
+   #:start-mcp-servers))

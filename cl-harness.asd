@@ -82,8 +82,8 @@
                (:file "harness")))
 
 (defsystem "cl-harness/cli"
-  :description "CL-Harness 命令行前端:REPL 与一次性执行"
-  :depends-on ("uiop" "cl-harness")
+  :description "CL-Harness 命令行前端:REPL 与一次性执行(--mcp 接入 MCP 服务器)"
+  :depends-on ("uiop" "cl-harness" "cl-harness/mcp")
   :pathname "src/"
   :serial t
   :components ((:file "packages")

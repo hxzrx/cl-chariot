@@ -147,6 +147,24 @@ HTTP:按规范发送 HTTP DELETE 显式结束会话(尽力而为)。
   `mcp-timeout`;close 时按规范发送 HTTP DELETE。
 - 无需后台线程:请求方线程同步抽干自己的响应流,会话语义与 stdio 共享。
 
+## CLI 集成(--mcp)
+
+命令行前端可零代码接入 MCP 服务器,桥接工具与内置工具同等参与审批与执行:
+
+```bash
+bin/cl-harness --mcp "fs=npx+-y+@modelcontextprotocol/server-filesystem+/tmp" \
+               --mcp "cantos=@https://cantos.cn/mcp+<token>" \
+               "整理 /tmp 下的大文件"
+```
+
+- SPEC 两种形式:`NAME=CMD[+ARG…]`(stdio)、`NAME=@URL[+TOKEN]`(HTTP,
+  TOKEN 以 Bearer 携带);可多次使用 `--mcp` 接入多台服务器;
+- 单台服务器启动失败只打印警告并跳过,不影响整体;退出时统一关闭全部会话;
+- REPL:`/mcp` 查看服务器与桥接工具,`/tools` 查看合并后的全部工具。
+- 库形态需要更复杂的配置(如自定义头、多传输混用)时,直接使用
+  `make-mcp-client` / `make-mcp-http-client` + `mcp-tools-from-server`
+  装配即可(CLI 的 `start-mcp-servers` 即此流程的封装)。
+
 ## 未做范围(明确声明)
 
 - **sampling / roots / elicitation** 等服务端→客户端能力:未实现;服务器调用
