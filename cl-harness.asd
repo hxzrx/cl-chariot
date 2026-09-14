@@ -104,6 +104,7 @@
                (:file "session-test")
                (:file "cli-test")
                (:file "live-test")
+               (:file "mcp-live-test")
                (:file "run-tests")))
 
 (defsystem "cl-harness/demo"

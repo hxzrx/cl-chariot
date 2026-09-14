@@ -89,7 +89,7 @@ token 泄露时换值重启 systemd 单元即可。
 cl-harness 当前实现的是 stdio 传输;经社区的 stdio↔HTTP 桥接器即可连上:
 
 ```lisp
-(let ((client (clh-mcp:make-mcp-client "npx" "mcp-remote"
+(let ((client (clh-mcp:make-mcp-client "npx" "-y" "mcp-remote"
                                         "https://cantos.cn/mcp"
                                         "--header" "Authorization: Bearer <token>")))
   (clh-mcp:initialize client)
@@ -100,6 +100,15 @@ cl-harness 当前实现的是 stdio 传输;经社区的 stdio↔HTTP 桥接器�
 
 (需要机器上有 Node.js/npx;mcp-remote 会把 401 转述为 stdio 侧错误,
 token 错误时先查这里。)
+
+仓库还内置了**真机联调套件**(自动经 mcp-remote 桥接,含握手/ping、
+工具桥接、只读注解与真实 echo 调用断言),已在 SBCL 与 CCL 上对本端点
+验证通过:
+
+```bash
+CLH_MCP_URL=https://cantos.cn/mcp CLH_MCP_TOKEN=<token> tests/run.sh
+# 未设置 CLH_MCP_URL 时该套件自动跳过,不影响离线全量
+```
 
 ### 将来(cl-harness 原生 HTTP 传输,直连)
 

@@ -13,6 +13,13 @@
   systemd 与 nginx(SSE 配置)部署示例及详细文档,已在本地实测
   20/20 通过(协议协商 `2025-06-18` 原样回应、SSE 响应帧、
   `mcp-session-id` 有状态会话均已验证)。
+- **MCP 真机联调套件(`mcp-live-suite`)**:新增 `CLH_MCP_URL`/`CLH_MCP_TOKEN`
+  环境变量门控,经 mcp-remote 桥接对远程 Streamable HTTP 服务器执行
+  握手/ping/工具桥接/只读注解/真实调用断言;未设置时自动跳过。
+  已对 cantos.cn 部署端点在 SBCL 与 CCL 上验证通过,离线全量升至
+  545 项断言。
+- 修复 `mcp/requirements.txt` 引号问题;修复公网部署 421
+  (SDK DNS 重绑定防护的 Host 白名单,新增 `MCP_ALLOWED_HOSTS`)。
 
 ## [0.2.0] - 2026-09-13
 
