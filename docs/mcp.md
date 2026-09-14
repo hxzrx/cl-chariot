@@ -1,11 +1,13 @@
 # MCP 客户端(cl-harness/mcp)
 
-CL-Harness 内置 **Model Context Protocol 客户端**(仅 **stdio 传输**),可以把任意
-MCP 服务器暴露的 tools 无损接入智能体工具体系。协议版本:**2025-06-18**
-(握手协商,向下兼容接受 2025-03-26 / 2024-11-05)。
+CL-Harness 内置 **Model Context Protocol 客户端**,支持 **stdio** 与
+**Streamable HTTP** 两种标准传输,可以把任意 MCP 服务器暴露的 tools 无损
+接入智能体工具体系。协议版本:声明并支持 **2025-11-25**(握手协商,向下
+兼容接受 2025-06-18 / 2025-03-26 / 2024-11-05;基础子集 initialize/ping/
+tools 在这些版本上行为一致)。
 
 系统名:`cl-harness/mcp`;包:`clh-mcp`;依赖:base / tools / uiop /
-bordeaux-threads / flexi-streams(不引入 HTTP 客户端,MCP stdio 无网络)。
+bordeaux-threads / flexi-streams / dexador(HTTP 传输复用项目既有依赖)。
 
 ---
 
@@ -32,6 +34,10 @@ bordeaux-threads / flexi-streams(不引入 HTTP 客户端,MCP stdio 无网络)�
     (clh-mcp:close-mcp-client client)))
 ```
 
+Streamable HTTP(远程端点):把首行换为
+`(clh-mcp:make-mcp-http-client "https://cantos.cn/mcp" :api-key "<token>")`,
+其余调用完全一致。
+
 完整可运行示例(离线、零 API Key):`sbcl --script examples/mcp-demo.lisp`。
 
 ---
@@ -41,10 +47,11 @@ bordeaux-threads / flexi-streams(不引入 HTTP 客户端,MCP stdio 无网络)�
 | 文件 | 职责 |
 |---|---|
 | `src/mcp-jsonrpc.lisp` | JSON-RPC 2.0 帧的构造/分派(纯函数)、协议版本常量、MCP 条件体系 |
-| `src/mcp-client.lisp` | 客户端连接:子进程、三个后台线程、id 配对等待注册表、超时与取消 |
+| `src/mcp-client.lisp` | 客户端核心:等待注册表、超时与取消、分派;stdio 子进程与三线程 |
+| `src/mcp-http.lisp` | Streamable HTTP:POST/SSE 抽流、会话与协议头、404 自动重握手 |
 | `src/mcp-tools.lisp` | 工具桥接:tools/list → `make-tool*`,tools/call 结果 → 文本 |
 
-### 线程模型(每客户端三个后台线程 + 主线程)
+### stdio 线程模型(每客户端三个后台线程 + 主线程)
 
 - **写线程**:唯一持有 stdin 写权。所有出站帧(请求/通知/对服务器请求的响应)
   先进入出站队列,由它顺序落盘。这一收敛同时规避了 CCL「流属于首个使用的
@@ -55,10 +62,17 @@ bordeaux-threads / flexi-streams(不引入 HTTP 客户端,MCP stdio 无网络)�
 - **stderr 线程**:排空子进程错误输出(防管道塞满阻塞服务器),收集为有界日志,
   经 `mcp-client-stderr-log` 读取。
 
+### HTTP 并发模型(无后台线程)
+
+请求方线程同步 POST 并「抽干」自己的响应流(SSE 帧逐行分发);流中夹带的
+服务器请求经与 stdio 相同的分派应答(独立 POST 回传),本请求的响应经共享
+等待注册表唤醒调用方。超时/取消/桥接语义与 stdio 完全一致。
+
 ### 收场顺序(close-mcp-client)
 
-关 stdin(让规整服务器优雅退出)→ SIGTERM 兜底 → 必要时 SIGKILL →
+stdio:关 stdin(让规整服务器优雅退出)→ SIGTERM 兜底 → 必要时 SIGKILL →
 等待三个线程经 EOF 自然退出 → 线程确认死亡后才关闭流。
+HTTP:按规范发送 HTTP DELETE 显式结束会话(尽力而为)。
 **顺序不可乱**:Linux 上 `close` 不会唤醒阻塞中的 `read`,若在读取线程仍阻塞
 时关闭流,僵尸线程会窃取之后复用同号 fd 的新管道数据,卡死整个进程。
 
@@ -73,7 +87,8 @@ bordeaux-threads / flexi-streams(不引入 HTTP 客户端,MCP stdio 无网络)�
 | `mcp-connection-error` | 进程启动失败、写入失败、服务器意外退出等;连接不可再用 |
 
 - 每个请求可单独带 `:timeout`(秒),默认 `clh-mcp:*mcp-default-timeout*`(30);
-  客户端级默认可用 `(make-mcp-client ... :default-timeout n)` 覆盖。
+  客户端级默认可用 `:default-timeout n`(`make-mcp-client` /
+  `make-mcp-http-client`)覆盖。
 - 服务器工具的业务失败(CallToolResult `isError:true`)在 `call-tool` 中以
   第二返回值表达;桥接成工具对象后转为 `tool-error`,由智能体主循环按
   「失败工具结果」回喂模型,循环不中断。
@@ -141,4 +156,7 @@ bordeaux-threads / flexi-streams(不引入 HTTP 客户端,MCP stdio 无网络)�
 - **HTTP 的 GET 长监听流**:POST 响应流内夹带的服务器请求/通知会被处理;
   完全依赖 GET 推送的服务器暂不支持。
 - **OAuth 2.1**:HTTP 鉴权用静态 Bearer(:API-KEY)与自定义头(:HEADERS)。
+- **2026-07-28 协议重写**:最新修订删除了握手与会话(改为每请求在 `_meta`
+  携带协议信息),需要独立的客户端模式,暂不支持;现有生态(SDK 与服务器)
+  仍普遍向下协商至旧代际,live 套件将持续充当兼容性哨兵。
 - 工具清单变更通知仅做缓存失效,不做自动重拉。

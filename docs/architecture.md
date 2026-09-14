@@ -98,7 +98,7 @@ CLI ───────┘        │
 
 ### 2.5 `cl-harness/mcp` —— MCP 客户端(stdio)
 
-接入 Model Context Protocol 服务器(协议版本 2025-06-18,握手协商),依赖
+接入 Model Context Protocol 服务器(声明协议版本 2025-11-25,向下兼容),依赖
 base/tools/uiop/bordeaux-threads,**不引入 HTTP 客户端**:
 
 - **帧层纯函数**(`mcp-jsonrpc`):JSON-RPC 2.0 构造/分派、错误码、条件体系;

@@ -92,6 +92,8 @@ COMPONENT-PATHNAME 才会包含系统定义的 :pathname(tests/),源目录本身
   ;; 声明版本即所支持最新版本,且在支持清单内
   (is (member +mcp-protocol-version+ +mcp-supported-versions+ :test #'string=))
   (is (protocol-version-supported-p +mcp-protocol-version+))
+  (is (protocol-version-supported-p "2025-11-25"))
+  (is (protocol-version-supported-p "2025-06-18"))
   (is (protocol-version-supported-p "2024-11-05"))
   (is (protocol-version-supported-p "2025-03-26"))
   (is (not (protocol-version-supported-p "1.0.0")))
