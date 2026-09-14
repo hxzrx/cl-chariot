@@ -1,5 +1,19 @@
 # 更新日志
 
+## [Unreleased]
+
+### 新增
+- **联调用 MCP 测试服务器(`mcp/` 目录)**:基于官方 Python SDK 的
+  FastMCP(锁定 `mcp>=1.9,<2`),经 Streamable HTTP 传输对外提供,
+  作为 cl-harness MCP 客户端联调 HTTP 功能的真实目标(部署示例
+  `https://cantos.cn/mcp`)。工具面与 stdio 假服务器对齐(echo/只读注解/
+  isError/慢工具/structuredContent/图片块/服务端 sampling 拒绝/
+  list_changed 缓存失效),内置 Bearer 鉴权中间件与启动护栏
+  (非回环监听必须配置 token);附 20 项部署冒烟脚本 `smoke_test.py`、
+  systemd 与 nginx(SSE 配置)部署示例及详细文档,已在本地实测
+  20/20 通过(协议协商 `2025-06-18` 原样回应、SSE 响应帧、
+  `mcp-session-id` 有状态会话均已验证)。
+
 ## [0.2.0] - 2026-09-13
 
 ### 新增

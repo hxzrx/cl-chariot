@@ -1,0 +1,34 @@
+# systemd 单元示例:cl-harness-test MCP 服务器(Streamable HTTP)
+#
+# 安装步骤(在 cantos.cn 服务器上,按实际情况替换 <> 占位):
+#   1. sudo cp mcp/ /opt/cl-harness-mcp/ -r        # 或 git clone / rsync
+#   2. cd /opt/cl-harness-mcp && python3 -m venv venv
+#      && venv/bin/pip install -r requirements.txt
+#   3. 生成 token:sudo sh -c 'echo MCP_BEARER_TOKEN=$(openssl rand -hex 32)
+#      > /etc/cl-harness-mcp.env && chmod 600 /etc/cl-harness-mcp.env'
+#   4. sudo cp deploy/cl-harness-mcp.service /etc/systemd/system/
+#      && sudo systemctl daemon-reload && sudo systemctl enable --now cl-harness-mcp
+#   5. nginx 按本目录 nginx-mcp.conf 配置 /mcp 反代并 reload
+#   6. 从任意外部机器:vpython smoke_test.py https://cantos.cn/mcp <token>
+
+[Unit]
+Description=CL-Harness 联调用 MCP 测试服务器(FastMCP, Streamable HTTP)
+After=network.target
+
+[Service]
+Type=simple
+User=<运行用户,如 www-data 或专用账号>
+Group=<运行用户组>
+WorkingDirectory=/opt/cl-harness-mcp
+# 鉴权 token 等敏感配置放外部文件(600 权限),不要写进单元文件
+EnvironmentFile=/etc/cl-harness-mcp.env
+Environment=MCP_HOST=127.0.0.1
+Environment=MCP_PORT=8765
+ExecStart=/opt/cl-harness-mcp/venv/bin/python server.py
+Restart=on-failure
+RestartSec=3
+# 有状态会话在进程内存中,必须单进程(代码内已强制 workers=1)
+# 安全加固:仅监听回环地址,由 nginx 对外暴露 443
+
+[Install]
+WantedBy=multi-user.target

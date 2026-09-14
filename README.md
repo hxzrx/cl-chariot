@@ -171,6 +171,7 @@ cl-harness/
 │   ├── harness.lisp        #   伞形包:统一导出 + 子智能体工具
 │   └── cli.lisp            #   命令行前端
 ├── tests/                  # FiveAM 测试套件(离线 + 真机联调两层)
+├── mcp/                    # 联调用 FastMCP 测试服务器(Streamable HTTP,部署示例 cantos.cn)
 ├── examples/               # 单文件示例脚本(MCP 端到端演示等)
 ├── demo/                   # 完整示例项目
 ├── docs/                   # 架构 / API / 厂商接入文档

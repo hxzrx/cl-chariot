@@ -95,6 +95,10 @@ bordeaux-threads / flexi-streams(不引入 HTTP 客户端,MCP stdio 无网络)�
 
 ## 测试与可注入性
 
+- 真实 HTTPS 联调目标:仓库 `mcp/` 目录提供一台基于 FastMCP 的
+  **Streamable HTTP 测试服务器**(部署示例 `https://cantos.cn/mcp`),
+  工具面与 stdio 假服务器对齐,含部署(systemd/nginx)与鉴权文档;
+  经 `npx mcp-remote` 桥接即可用当前 stdio 客户端连通,详见 `mcp/README.md`。
 - `clh-mcp:*mcp-spawn-fn*`:进程/流启动注入点,签名
   `(FN COMMAND ARGV) → (VALUES STDIN STDOUT STDERR PROCESS)`,测试可注入假流。
 - 测试套件 `tests/mcp-test.lisp`(160 项断言):帧层纯函数、裸客户端分派逻辑、

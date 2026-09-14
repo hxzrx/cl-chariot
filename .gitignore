@@ -9,3 +9,5 @@ build/
 .#*
 analysis-report.md
 .DS_Store
+__pycache__/
+*.pyc
