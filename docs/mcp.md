@@ -161,6 +161,8 @@ bin/cl-harness --mcp "fs=npx+-y+@modelcontextprotocol/server-filesystem+/tmp" \
   TOKEN 以 Bearer 携带);可多次使用 `--mcp` 接入多台服务器;
 - 单台服务器启动失败只打印警告并跳过,不影响整体;退出时统一关闭全部会话;
 - REPL:`/mcp` 查看服务器与桥接工具,`/tools` 查看合并后的全部工具。
+- `--tools LIST` 为工具名白名单(逗号分隔),对内置与 MCP 工具统一筛选,
+  如 `--tools "read,grep,mcp__fake__echo"`;存在未知名字时启动即报错。
 - 库形态需要更复杂的配置(如自定义头、多传输混用)时,直接使用
   `make-mcp-client` / `make-mcp-http-client` + `mcp-tools-from-server`
   装配即可(CLI 的 `start-mcp-servers` 即此流程的封装)。

@@ -47,7 +47,8 @@
       --api-key KEY     API Key(默认读厂商对应环境变量)
       --base-url URL    自定义 OpenAI 兼容端点
       --system TEXT     系统提示词
-      --tools LIST      逗号分隔的工具子集,如 read,grep,bash(默认全部内置工具)
+      --tools LIST      逗号分隔的工具名白名单,如 read,grep 或 mcp__fake__echo
+                        (默认全部;内置与 MCP 工具均可筛选)
       --mcp SPEC        接入 MCP 服务器(可多次),SPEC 形如:
                         NAME=CMD[+ARG…]     stdio 子进程传输
                         NAME=@URL[+TOKEN]   Streamable HTTP(Bearer 鉴权)
@@ -269,6 +270,23 @@ REPL 斜杠命令:
 ;;; 智能体装配
 ;;; ---------------------------------------------------------------------------
 
+(defun select-tools (all-tools spec)
+  "按 SPEC(逗号分隔的工具名白名单)筛选 ALL-TOOLS;顺序保持 ALL-TOOLS 原序。
+SPEC 为 NIL/空白时返回全部;存在未知名字时信号错误——拼写错误应当即暴露,
+而不是让工具静默缺席。"
+  (if (clh-util:string-blank-p spec)
+      all-tools
+      (let* ((names (clh-util:split-string spec :delimiter #\,))
+             (picked (remove-if-not
+                      (lambda (tool)
+                        (member (clh-tools:tool-name tool) names :test #'string=))
+                      all-tools)))
+        (dolist (n names)
+          (unless (find n picked :key #'clh-tools:tool-name :test #'string=)
+            (error "未知的工具:~A(可用:~{~A~^, ~})"
+                   n (mapcar #'clh-tools:tool-name all-tools))))
+        picked)))
+
 (defun opts->agent-args (opts &key mcp-tools)
   "把 CLI 选项转换为 MAKE-AGENT 参数。
 注意:仅当选项有值时才传给 MAKE-PROVIDER——显式传 NIL 会遮蔽预设默认值
@@ -280,7 +298,8 @@ REPL 斜杠命令:
                                   (when (getf opts :model) (list :model (getf opts :model)))
                                   (when (getf opts :base-url) (list :base-url (getf opts :base-url)))))))
     (list :provider provider
-          :tools (append clh-tools:+builtin-tools+ mcp-tools)
+          :tools (select-tools (append clh-tools:+builtin-tools+ mcp-tools)
+                               (getf opts :tools))
           :system-prompt (getf opts :system)
           :max-turns (or (getf opts :max-turns) 40)
           :permission-mode (getf opts :permission :default)

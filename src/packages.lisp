@@ -371,4 +371,5 @@ HTTP 的 GET 长监听流、OAuth 2.1。")
    #:run-oneshot
    #:run-repl
    #:parse-mcp-spec
-   #:start-mcp-servers))
+   #:start-mcp-servers
+   #:select-tools))

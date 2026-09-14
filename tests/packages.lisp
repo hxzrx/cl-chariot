@@ -67,5 +67,5 @@
   (:import-from :clh
    #:+version+ #:make-subagent-tool)
   (:import-from :clh-cli
-   #:main #:parse-args #:parse-mcp-spec #:start-mcp-servers)
+   #:main #:parse-args #:parse-mcp-spec #:start-mcp-servers #:select-tools)
   (:export #:run-all #:run-offline #:run-live #:*live-model*))

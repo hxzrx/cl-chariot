@@ -121,3 +121,27 @@
                (is (search "2025-" text))
                (is (search "mcp__fake__echo" text))))
         (clh-mcp:close-mcp-client (first clients))))))
+
+;;; ---------- 工具子集筛选(--tools) ----------
+
+(test select-tools-whitelist
+  (let* ((mcp (list (clh-tools:make-tool :name "mcp__x__echo" :description "d")
+                    (clh-tools:make-tool :name "mcp__x__slow" :description "d")))
+         (all (append clh-tools:+builtin-tools+ mcp)))
+    ;; 白名单:保持 all 的原序,内置与 MCP 工具一起筛
+    (is (equal '("read" "grep")
+               (mapcar #'tool-name (select-tools all "read,grep"))))
+    (is (equal '("mcp__x__echo")
+               (mapcar #'tool-name (select-tools all "mcp__x__echo"))))
+    ;; 空白/NIL → 全部(同一对象,零拷贝)
+    (is (eq all (select-tools all nil)))
+    (is (eq all (select-tools all "")))
+    ;; 未知名字报错,防拼写错误静默丢工具
+    (signals error (select-tools all "read,no-such-tool"))))
+
+(test opts-agent-args-tools-filter
+  (let* ((mcp (list (clh-tools:make-tool :name "mcp__x__echo" :description "d")))
+         (args (clh-cli::opts->agent-args (list :tools "read,mcp__x__echo")
+                                          :mcp-tools mcp)))
+    (is (equal '("read" "mcp__x__echo")
+               (mapcar #'tool-name (getf args :tools))))))
