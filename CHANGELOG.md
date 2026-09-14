@@ -20,6 +20,20 @@
   545 项断言。
 - 修复 `mcp/requirements.txt` 引号问题;修复公网部署 421
   (SDK DNS 重绑定防护的 Host 白名单,新增 `MCP_ALLOWED_HOSTS`)。
+- **MCP 客户端新增 Streamable HTTP 传输(`make-mcp-http-client`)**:
+  - 每条消息一次 POST,响应兼容 application/json 与 SSE 帧两种形态,
+    流中夹带的服务器请求经统一分派应答(未注册方法仍回 -32601);
+  - 会话管理:握手捕获 `Mcp-Session-Id` 并全程回传,后续请求携带
+    `MCP-Protocol-Version` 头,**404 会话过期自动重握手并重放原请求**
+    (会话 ID 比对去重);close 时按规范发送 HTTP DELETE;
+  - 鉴权:静态 Bearer(:API-KEY)与自定义头(:HEADERS);OAuth 2.1 未做;
+  - 超时/取消/桥接/智能体集成语义与 stdio 完全一致,工具桥接层零改动;
+  - 测试:新增 HTTP 套件 39 项断言(离线假 HTTP 服务器
+    `tests/fake-mcp-http-server.py`,纯标准库实现);真机套件切换为
+    原生直连,SBCL 2.6.8 与 CCL 1.13 对 cantos.cn 端点实测通过,
+    离线全量升至 584 项断言。
+  - 未做:HTTP 的 GET 长监听流(仅处理 POST 响应流内夹带的消息)、
+    OAuth 2.1。
 
 ## [0.2.0] - 2026-09-13
 

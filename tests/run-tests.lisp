@@ -15,8 +15,8 @@
   (let* ((live-p (or include-live-p (equal (uiop:getenv "CLH_LIVE") "1")))
          (suite-names
            (append '(util-suite json-suite message-suite provider-suite
-                     tool-suite agent-suite mcp-suite session-suite cli-suite
-                     mcp-live-suite)
+                     tool-suite agent-suite mcp-suite mcp-http-suite
+                     session-suite cli-suite mcp-live-suite)
                    (when live-p '(live-suite))))
          (total-failed 0))
     (dolist (name suite-names)

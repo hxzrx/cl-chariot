@@ -18,7 +18,7 @@ DeepSeek / Qwen / GLM / OpenAI 等多种大模型,提供可编程的智能体主
 | 流式输出 | SSE 流式解析,文本/思考(reasoning)增量经事件回调逐段交付 |
 | 智能体主循环 | 「模型 → 工具调用 → 结果回喂」多轮循环;轮数/上下文/成本三重护栏 |
 | 工具系统 | `define-tool` 声明式定义工具;自动生成 JSON Schema;内置 bash/read/write/edit/glob/grep/web-fetch 七件 |
-| MCP 接入 | stdio 传输 MCP 客户端(协议 2025-06-18);服务器工具零损失桥接为本地工具;超时/取消/断连收场 |
+| MCP 接入 | stdio + Streamable HTTP 双传输 MCP 客户端(协议 2025-06-18);工具零损失桥接;会话过期自动重握手;超时/取消/断连收场 |
 | 审批策略 | yolo / default / readonly 三种模式 + 工具黑白名单 + 可编程询问回调 |
 | 会话持久化 | JSONL 事件流;崩溃容忍加载;支持从历史对话续跑 |
 | 上下文管理 | CJK 感知的 token 估算;超预算裁剪,保证不产生孤儿工具消息 |
@@ -57,13 +57,17 @@ DeepSeek / Qwen / GLM / OpenAI 等多种大模型,提供可编程的智能体主
 
 ### 1b. 接入 MCP 服务器
 
-`cl-harness/mcp` 提供 stdio 传输的 MCP 客户端(协议版本 2025-06-18),把
-MCP 服务器的 tools 桥接为普通工具对象,与内置工具同等使用:
+`cl-harness/mcp` 提供 **stdio 与 Streamable HTTP** 双传输的 MCP 客户端
+(协议版本 2025-06-18),把 MCP 服务器的 tools 桥接为普通工具对象,与
+内置工具同等使用:
 
 ```lisp
 (ql:quickload :cl-harness/mcp)
 
+;; stdio:本地子进程
 (let ((client (clh-mcp:make-mcp-client "python3" "/path/to/mcp-server.py")))
+  ;; 或 Streamable HTTP:远程端点
+  ;; (let ((client (clh-mcp:make-mcp-http-client "https://cantos.cn/mcp" :api-key "<token>")))
   (unwind-protect
        (progn
          (clh-mcp:initialize client)                      ; 握手 + 版本协商
@@ -74,7 +78,8 @@ MCP 服务器的 tools 桥接为普通工具对象,与内置工具同等使用:
 ```
 
 离线端到端演示(无需 API Key):`sbcl --script examples/mcp-demo.lisp`。
-详见 [docs/mcp.md](docs/mcp.md)。
+详见 [docs/mcp.md](docs/mcp.md) 与 [mcp/README.md](mcp/README.md)(真实
+HTTPS 端点的测试服务器部署)。
 
 ### 2. 命令行使用
 

@@ -48,7 +48,7 @@
    #:+jsonrpc-parse-error+ #:+jsonrpc-invalid-request+
    #:+jsonrpc-method-not-found+ #:+jsonrpc-invalid-params+
    #:+jsonrpc-internal-error+
-   #:mcp-client #:mcp-client-p #:make-mcp-client
+   #:mcp-client #:mcp-client-p #:make-mcp-client #:make-mcp-http-client
    #:mcp-client-name #:mcp-client-command #:mcp-client-argv
    #:mcp-client-server-info #:mcp-client-server-name
    #:mcp-client-server-capabilities #:mcp-client-instructions

@@ -63,13 +63,20 @@ STDIN 为本客户端向服务器写入的字符流(子进程 stdin),STDOUT/STDE
 ;;; ---------------------------------------------------------------------------
 
 (defstruct (mcp-client (:constructor %make-mcp-client))
-  "MCP stdio 客户端(有状态,非线程安全对象——并发请求经由内部锁与注册表
-配对,但同一客户端对象的关闭应只做一次)。
-NAME                客户端逻辑名(默认取命令基名),用于工具桥接命名与日志;
-COMMAND/ARGV        启动服务器的命令与参数(记录用);
+  "MCP 客户端(有状态,支持 stdio 与 Streamable HTTP 两种传输;并发请求经
+内部锁与注册表配对,同一客户端对象的关闭应只做一次)。
+NAME                客户端逻辑名,用于工具桥接命名与日志;
+TRANSPORT           :stdio(子进程)或 :http(Streamable HTTP);
+COMMAND/ARGV        stdio:启动服务器的命令与参数(记录用);
+URL                 http:MCP 端点(如 https://cantos.cn/mcp);
+API-KEY             http:Bearer 令牌(可选);
+HTTP-HEADERS        http:附加请求头((\"Name\" . \"value\") alist,可选);
+SESSION-ID          http:服务器在握手响应中下发的 Mcp-Session-Id;
+SESSION-GENERATION  http:会话代次(每次 404 重握手自增);
+REINIT-LOCK         http:404 重握手的串行化(会话 ID 比对去重);
 DEFAULT-TIMEOUT     请求默认超时(秒);
-PROCESS             uiop 进程对象(流注入场景为 NIL);
-STDIN/STDOUT/STDERR 与子进程相连的三条 UTF-8 字符流;
+PROCESS             stdio:uiop 进程对象(流注入场景为 NIL);
+STDIN/STDOUT/STDERR stdio:与子进程相连的三条 UTF-8 字符流;
 LOCK                保护 PENDING/NEXT-ID/出站队列/缓存/状态标志的锁;
 WRITE-LOCK          序列化写线程对 stdin 的实际写入;
 OUTBOUND-QUEUE      待发送的 JSON 行(先进先出,由写线程消费);
@@ -88,11 +95,18 @@ TOOLS-CACHE-VALID-P 缓存是否有效(收到 tools/list_changed 通知即失效
 REQUEST-HANDLERS    (方法名字符串 . 处理函数) alist,处理服务器→客户端请求;
 NOTIFICATION-CALLBACK 服务器通知回调 (LAMBDA (METHOD PARAMS)),可 NIL;
 STDERR-LOG          子进程 stderr 行(最新的在前,有界);
-WRITER-THREAD/READER-THREAD/STDERR-THREAD 后台线程(收场靠 EOF,不 join);
+WRITER-THREAD/READER-THREAD/STDERR-THREAD stdio 后台线程(收场靠 EOF,不 join);
 MALFORMED-COUNT     无法解析的入站行计数(诊断用)。"
   (name "" :type string)
   (command "" :type string)
   (argv '() :type list)
+  (transport :stdio)
+  (url "" :type string)
+  (api-key nil)
+  (http-headers '() :type list)
+  (session-id nil)
+  (session-generation 0)
+  (reinit-lock (bt:make-lock "mcp-http-reinit"))
   (default-timeout 30)
   (process nil)
   (stdin nil)
@@ -241,19 +255,33 @@ COMMAND 为可执行程序;ARGS 中位于关键字之前、连续的字符串参
         nil))))
 
 (defun %send-obj (client obj)
-  "把一帧消息编码后加入出站队列,由写线程异步落盘。
-CCL 的流属于「首个使用的进程」:若多线程直接写同一 stdin,首个线程之外的
-写入会报 stream-is-private;收敛到专属写线程即天然规避,且各调用方(含读取
-线程回包)都不再被管道写入阻塞。连接已断/已关闭时立即报错。"
+  "把一帧消息发往服务器:stdio 编码后加入出站队列(写线程异步落盘,
+规避 CCL 流属主限制);HTTP 同步 POST(通知/对服务器请求的响应按规范
+期待 202)。连接已断/已关闭时立即报错。"
   (let ((line (encode-json obj)))
-    (bt:with-lock-held ((mcp-client-lock client))
-      (cond ((mcp-client-closed-p client)
-             (error 'mcp-connection-error :message "客户端已关闭,无法发送"))
-            ((mcp-client-dead-p client)
-             (error 'mcp-connection-error :message "与 MCP 服务器的连接已断开,无法发送"))
-            (t
-             (append-to-outbound client line)
-             (bt:condition-notify (mcp-client-outbound-cv client)))))))
+    (ecase (mcp-client-transport client)
+      (:stdio (%stdio-enqueue client line))
+      (:http (%http-send-obj client line)))))
+
+(defun %stdio-enqueue (client line)
+  "stdio 路径:入队并唤醒写线程(须未关闭/未断连)。"
+  (bt:with-lock-held ((mcp-client-lock client))
+    (cond ((mcp-client-closed-p client)
+           (error 'mcp-connection-error :message "客户端已关闭,无法发送"))
+          ((mcp-client-dead-p client)
+           (error 'mcp-connection-error :message "与 MCP 服务器的连接已断开,无法发送"))
+          (t
+           (append-to-outbound client line)
+           (bt:condition-notify (mcp-client-outbound-cv client))))))
+
+(defun %transmit-request (client waiter id method params deadline)
+  "按传输类型发送请求并投递其间的入站消息。
+stdio:入队后即返回,响应由读取线程唤醒等待者;
+HTTP:同步 POST 并抽干响应流,直到本请求的响应到达或流结束
+(其间夹带的服务器请求经 %dispatch-request 得到应答)。"
+  (ecase (mcp-client-transport client)
+    (:stdio (%send-obj client (make-jsonrpc-request id method params)))
+    (:http (%http-transmit-request client waiter id method params deadline))))
 
 (defun append-to-outbound (client line)
   "向出站队列追加一行(须已持有客户端锁)。"
@@ -320,8 +348,8 @@ id 注册先于写入:响应可能在写入返回前到达,注册表必须先行
                       (round (* (or timeout (mcp-client-default-timeout client))
                                 internal-time-units-per-second))))
          (id (%waiter-id waiter)))
-    ;; 写入请求(失败须摘除注册,避免悬挂条目)
-    (handler-case (%send-obj client (make-jsonrpc-request id method params))
+    ;; 发送请求并投递入站消息(失败须摘除注册,避免悬挂条目)
+    (handler-case (%transmit-request client waiter id method params deadline)
       (error (e)
         (bt:with-lock-held ((mcp-client-lock client))
           (remhash id (mcp-client-pending client)))
@@ -617,6 +645,7 @@ image/audio/内嵌 resource 等当前未支持,以明确标注的占位说明代
   "关闭客户端(stdio 规范的收尾方式,无 shutdown 消息):
 关 stdin 让规整的服务器自行退出 → 稍候 terminate-process 兜底强杀 →
 等待读取/排空线程经 EOF 自然退出 → 线程确认死亡后才关闭其余流。
+HTTP 传输则以规范建议的 HTTP DELETE 显式结束会话(尽力而为)。
 幂等:重复调用安全。
 
 顺序的关键:绝不能在读取线程仍阻塞于流上时关闭该流——Linux 上 close
@@ -627,13 +656,16 @@ image/audio/内嵌 resource 等当前未支持,以明确标注的占位说明代
       (setf (mcp-client-closed-p client) t))
     ;; 唤醒写线程:其发现 CLOSED-P 后退出(此后不再触碰 stdin)
     (bt:condition-notify (mcp-client-outbound-cv client)))
-  ;; ① 等写线程停止(它持有对 stdin 的唯一写权,须先行收场)
+  ;; ① http:DELETE 显式结束会话(尽力而为)
+  (when (eq (mcp-client-transport client) :http)
+    (%http-delete-session client))
+  ;; ② stdio:等写线程停止(它持有对 stdin 的唯一写权,须先行收场)
   (%join-thread-with-timeout (mcp-client-writer-thread client))
-  ;; ② 关 stdin:规整的服务器(如 MCP 官方 SDK 实现)读到 EOF 后自行退出
+  ;; ③ stdio:关 stdin,规整的服务器(如 MCP 官方 SDK 实现)读到 EOF 后自行退出
   (when (mcp-client-stdin client)
     (handler-case (close (mcp-client-stdin client))
       (error () nil)))
-  ;; ③ 兜底:SIGTERM,再不退就 SIGKILL(uiop 进程已退出时报错一并吞掉)
+  ;; ④ 兜底:SIGTERM,再不退就 SIGKILL(uiop 进程已退出时报错一并吞掉)
   (when (mcp-client-process client)
     (sleep 0.2)
     (handler-case (uiop:terminate-process (mcp-client-process client))
@@ -642,7 +674,7 @@ image/audio/内嵌 resource 等当前未支持,以明确标注的占位说明代
       (sleep 0.2)
       (handler-case (uiop:terminate-process (mcp-client-process client) :kill t)
         (error () nil))))
-  ;; ③ 失败全部在途请求(读取线程收场时也会做,此处先行保证及时性)
+  ;; ⑤ 失败全部在途请求(读取线程收场时也会做,此处先行保证及时性)
   (%fail-all-pending
    client
    (make-condition 'mcp-connection-error :message "客户端已关闭"))

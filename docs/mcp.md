@@ -95,23 +95,50 @@ bordeaux-threads / flexi-streams(不引入 HTTP 客户端,MCP stdio 无网络)�
 
 ## 测试与可注入性
 
-- 真实 HTTPS 联调目标:仓库 `mcp/` 目录提供一台基于 FastMCP 的
-  **Streamable HTTP 测试服务器**(部署示例 `https://cantos.cn/mcp`),
-  工具面与 stdio 假服务器对齐,含部署(systemd/nginx)与鉴权文档;
-  经 `npx mcp-remote` 桥接即可用当前 stdio 客户端连通,详见 `mcp/README.md`。
+- 真实 HTTPS 联调:仓库 `mcp/` 目录提供基于 FastMCP 的 **Streamable HTTP
+  测试服务器**(部署示例 `https://cantos.cn/mcp`),含部署(systemd/nginx)
+  与鉴权文档;live 套件(`CLH_MCP_URL` / `CLH_MCP_TOKEN` 门控)以原生
+  HTTP 客户端直连验证,详见 `mcp/README.md`。
 - `clh-mcp:*mcp-spawn-fn*`:进程/流启动注入点,签名
   `(FN COMMAND ARGV) → (VALUES STDIN STDOUT STDERR PROCESS)`,测试可注入假流。
-- 测试套件 `tests/mcp-test.lisp`(160 项断言):帧层纯函数、裸客户端分派逻辑、
-  真实子进程 stdio 回路(python3 假服务器 `tests/fake-mcp-server.py`:握手
-  协商、翻页与缓存、isError、超时取消、乱序与并发 id 配对、进程意外退出、
-  服务器→客户端请求应答、桥接端到端、智能体主循环集成)。python3 缺失时
-  子进程类测试自动跳过。
+- 测试套件 `tests/mcp-test.lisp`(stdio,160 项断言)与
+  `tests/mcp-http-test.lisp`(HTTP,39 项断言):帧层纯函数、裸客户端分派
+  逻辑、真实子进程/HTTP 回路(python 假服务器:握手协商、会话与协议头、
+  isError、超时取消、乱序与并发 id 配对、404 自动重握手、鉴权失败、
+  桥接端到端)。python3 缺失时子进程类测试自动跳过。
+
+## Streamable HTTP 传输
+
+```lisp
+(let ((client (clh-mcp:make-mcp-http-client "https://cantos.cn/mcp"
+                                            :api-key "<token>")))
+  (unwind-protect
+       (progn
+         (clh-mcp:initialize client)
+         (let ((tools (clh-mcp:mcp-tools-from-server client)))
+           ...))
+    (clh-mcp:close-mcp-client client)))
+```
+
+实现要点(已对真实部署端点与离线假服务器双重验证):
+- 每条消息一次 POST;响应兼容 `application/json` 与 `text/event-stream`
+  两种形态(SSE 帧逐行抽干,其间夹带的服务器请求经统一分派应答);
+- 通知/响应期待 202;握手响应捕获 `Mcp-Session-Id` 并在后续请求回传,
+  初始化后的请求携带 `MCP-Protocol-Version` 头;
+- **404 自动重握手**:会话过期时自动重新 initialize 并重放原请求
+  (以会话 ID 比对做并发去重——时间窗去重是错的,串行的第二次过期会被
+  误判为「他人已重握手」);
+- 超时语义与 stdio 一致:deadline 判定、超时先发取消通知再信号
+  `mcp-timeout`;close 时按规范发送 HTTP DELETE。
+- 无需后台线程:请求方线程同步抽干自己的响应流,会话语义与 stdio 共享。
 
 ## 未做范围(明确声明)
 
-- **HTTP / Streamable HTTP 传输**:仅实现 stdio。
 - **sampling / roots / elicitation** 等服务端→客户端能力:未实现;服务器调用
   未注册方法时按规范回 -32601(ping 内置应答)。可用
   `register-request-handler` 注册自定义处理器。
 - **resources / prompts**:未实现 `resources/*` 与 `prompts/*` 封装。
+- **HTTP 的 GET 长监听流**:POST 响应流内夹带的服务器请求/通知会被处理;
+  完全依赖 GET 推送的服务器暂不支持。
+- **OAuth 2.1**:HTTP 鉴权用静态 Bearer(:API-KEY)与自定义头(:HEADERS)。
 - 工具清单变更通知仅做缓存失效,不做自动重拉。

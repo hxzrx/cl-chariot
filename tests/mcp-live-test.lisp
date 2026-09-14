@@ -1,13 +1,11 @@
 ;;;; mcp-live-test.lisp —— MCP 真机联调套件(默认跳过,需显式开启)
 ;;;;
 ;;;; 目标:仓库 mcp/ 目录部署的 Streamable HTTP 测试服务器(示例
-;;;; https://cantos.cn/mcp)。当前 cl-harness 仅有 stdio 客户端,故经
-;;;; 社区桥接器 mcp-remote(node)接入;cl-harness 实现 HTTP 传输后,
-;;;; 本套件改为直连即可,断言不变。
+;;;; https://cantos.cn/mcp),以 cl-harness 原生 HTTP 客户端直连。
 ;;;;
 ;;;; 开启方式(环境变量门控,与 CLH_LIVE 模式一致):
 ;;;;   CLH_MCP_URL=https://cantos.cn/mcp  CLH_MCP_TOKEN=<token>  tests/run.sh
-;;;; 未设置 CLH_MCP_URL 或机器没有 npx 时,套件内用例自动跳过(skip)。
+;;;; 未设置 CLH_MCP_URL 时,套件内用例自动跳过(skip)。
 
 (in-package :clh-test)
 
@@ -20,30 +18,22 @@
     (and url (plusp (length url)) url)))
 
 (defun %mcp-live-token ()
-  (uiop:getenv "CLH_MCP_TOKEN"))
-
-(defun %npx-available-p ()
-  (not (null (ignore-errors
-               (uiop:run-program '("npx" "--version")
-                                 :output :string :error-output :string
-                                 :ignore-error-status t)))))
+  (let ((token (uiop:getenv "CLH_MCP_TOKEN")))
+    (and token (plusp (length token)) token)))
 
 (defmacro skip-unless-live-mcp (&body body)
   "门控不满足时记录 skip 并跳过 BODY(FiveAM 的 SKIP 只记录结果、
 不终止执行,故必须把测试体包进条件分支,而不是在序言里调用)。"
-  `(if (and (%mcp-live-url) (%npx-available-p))
+  `(if (%mcp-live-url)
        (progn ,@body)
-       (skip "未设置 CLH_MCP_URL 或缺少 npx,跳过 MCP 真机联调")))
+       (skip "未设置 CLH_MCP_URL,跳过 MCP 真机联调")))
 
 (defun %start-live-client ()
-  "经 mcp-remote 桥接建立到远程 MCP 服务器的 stdio 客户端。"
-  (let ((token (%mcp-live-token)))
-    (if (and token (plusp (length token)))
-        (make-mcp-client "npx" "-y" "mcp-remote" (%mcp-live-url)
-                         "--header" (concatenate 'string "Authorization: Bearer " token)
-                         :name "live" :default-timeout 120)
-        (make-mcp-client "npx" "-y" "mcp-remote" (%mcp-live-url)
-                         :name "live" :default-timeout 120))))
+  "原生 HTTP 客户端直连远程 MCP 服务器。"
+  (make-mcp-http-client (%mcp-live-url)
+                        :api-key (%mcp-live-token)
+                        :name "live"
+                        :default-timeout 120))
 
 (defmacro with-live-mcp ((var) &body body)
   `(let ((,var (%start-live-client)))

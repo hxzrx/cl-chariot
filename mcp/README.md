@@ -110,17 +110,26 @@ CLH_MCP_URL=https://cantos.cn/mcp CLH_MCP_TOKEN=<token> tests/run.sh
 # 未设置 CLH_MCP_URL 时该套件自动跳过,不影响离线全量
 ```
 
-### 将来(cl-harness 原生 HTTP 传输,直连)
+### 原生直连(cl-harness 已内置 Streamable HTTP 传输)
 
-实现 HTTP 传输后按 `make-mcp-http-client "https://cantos.cn/mcp" :api-key <token>`
-形态直连。对接要点(本服务器已实测,供实现时参考):
+```lisp
+(let ((client (clh-mcp:make-mcp-http-client "https://cantos.cn/mcp"
+                                            :api-key "<token>" :name "cantos")))
+  (clh-mcp:initialize client)
+  (let ((tools (clh-mcp:mcp-tools-from-server client)))
+    ;; 与 stdio 桥接的工具对象完全同构,直接进入智能体工具集
+    ...))
+```
+
+对接要点(本服务器已实测,供参考):
 
 - **协议协商**:客户端请求 `2025-06-18`,服务器原样回应同一版本(SDK 1.30
   支持向下协商;冒烟时它对自家 SDK 客户端则回应更新的 `2025-11-25`——
   以客户端请求为准的协商行为已用原始请求验证);
 - **Host 头白名单**:SDK 默认开启 DNS 重绑定防护,Host 不在
   `MCP_ALLOWED_HOSTS` 时回 **421 "Invalid Host header"**——若收到 421,
-  先检查服务器 env 里的白名单是否含外部域名并确认进程已重启加载;
+  先检查服务器 env 里的白名单是否含外部域名并确认进程已重启加载
+  (cl-harness 客户端侧无需处理,该错误来自服务端);
 - **响应是 SSE 帧**:POST 的响应为 `text/event-stream`(`event: message` +
   `data: {JSON}` 行),客户端必须支持,而不是假定 `application/json`;
 - **有状态会话**:initialize 响应带 `mcp-session-id` 头,后续请求必须带回;

@@ -219,15 +219,17 @@ HTTP 传输通过动态变量 *http-post-fn* 注入,便于测试与替换。")
 
 (defpackage :clh-mcp
   (:documentation
-   "CL-Harness MCP 客户端层:经 stdio 传输接入 Model Context Protocol 服务器,
+   "CL-Harness MCP 客户端层:接入 Model Context Protocol 服务器,
 并把服务器提供的 tools 无损桥接为 CL-Harness 工具对象。
+传输:stdio(子进程)与 Streamable HTTP(POST/SSE/会话管理)。
    - JSON-RPC 2.0 帧:换行分隔、UTF-8;构造与分派为纯函数(mcp-jsonrpc);
-   - 客户端连接:子进程管理、后台读取线程、按 id 配对的等待注册表、
-     逐请求超时与取消通知(mcp-client);
+   - 客户端连接:后台线程(stdio)或同步抽流(http)、按 id 配对的等待
+     注册表、逐请求超时与取消通知(mcp-client / mcp-http);
    - 工具桥接:tools/list 结果直接携带现成 JSON Schema(经 CLH-TOOLS:MAKE-TOOL*
      零损失构造),tools/call 结果的 content 块拼接为文本(mcp-tools)。
-未做范围:HTTP/SSE 传输、sampling/roots/elicitation 等服务端→客户端能力
-(收到未支持的请求时按规范回 -32601 method-not-found)、resources/prompts。")
+未做范围:sampling/roots/elicitation 等服务端→客户端能力(收到未支持的
+请求时按规范回 -32601 method-not-found)、resources/prompts、
+HTTP 的 GET 长监听流、OAuth 2.1。")
   (:use :cl :clh-util :clh-json :clh-tools)
   (:export
    ;; 条件
@@ -257,6 +259,7 @@ HTTP 传输通过动态变量 *http-post-fn* 注入,便于测试与替换。")
    #:mcp-client
    #:mcp-client-p
    #:make-mcp-client
+   #:make-mcp-http-client
    #:mcp-client-name
    #:mcp-client-command
    #:mcp-client-argv

@@ -62,14 +62,15 @@
                (:file "agent")))
 
 (defsystem "cl-harness/mcp"
-  :description "CL-Harness MCP 客户端:stdio 传输、工具桥接(协议版本 2025-06-18)"
-  :depends-on ("uiop" "bordeaux-threads" "flexi-streams"
+  :description "CL-Harness MCP 客户端:stdio 与 Streamable HTTP 传输、工具桥接(协议 2025-06-18)"
+  :depends-on ("uiop" "bordeaux-threads" "flexi-streams" "dexador"
                "cl-harness/base" "cl-harness/tools")
   :pathname "src/"
   :serial t
   :components ((:file "packages")
                (:file "mcp-jsonrpc")
                (:file "mcp-client")
+               (:file "mcp-http")
                (:file "mcp-tools")))
 
 (defsystem "cl-harness"
@@ -101,6 +102,7 @@
                (:file "tool-test")
                (:file "agent-test")
                (:file "mcp-test")
+               (:file "mcp-http-test")
                (:file "session-test")
                (:file "cli-test")
                (:file "live-test")
