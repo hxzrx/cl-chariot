@@ -55,7 +55,7 @@ STDIN 为本客户端向服务器写入的字符流(子进程 stdin),STDOUT/STDE
 (defparameter +mcp-client-info-name+ "cl-harness"
   "initialize 握手 clientInfo.name 的默认值。")
 
-(defparameter +mcp-client-info-version+ "0.2.0"
+(defparameter +mcp-client-info-version+ "0.3.0"
   "initialize 握手 clientInfo.version。")
 
 ;;; ---------------------------------------------------------------------------
