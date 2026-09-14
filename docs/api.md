@@ -172,3 +172,83 @@ clh-tools:+builtin-tools+     ; 工具列表
 
 工具失败不产生条件(转为失败工具结果);`max-turns`/预算耗尽也不产生条件,
 而是体现在 `result-stop-reason`。
+
+## 8. MCP 客户端(Model Context Protocol)
+
+系统:`cl-harness/mcp`(`(ql:quickload :cl-harness/mcp)`)。协议版本:声明
+**2025-11-25**,向下兼容 2025-06-18 / 2025-03-26 / 2024-11-05。
+传输:**stdio**(本地子进程)与 **Streamable HTTP**(远程端点)。
+
+### make-mcp-client / make-mcp-http-client
+
+```lisp
+(clh-mcp:make-mcp-client command &rest args
+                         &key name default-timeout notification-callback)
+(clh-mcp:make-mcp-http-client url &key name api-key headers default-timeout)
+```
+
+- stdio:`command` 为可执行程序,其后**位于关键字之前的连续字符串参数**
+  逐个传给服务器,如 `(make-mcp-client "python3" "server.py" "--verbose")`;
+- http:`url` 为 MCP 端点;`:api-key` 以 `Authorization: Bearer` 携带,
+  `:headers` 为任意附加头 alist `("Name" . "value")`;
+- 返回的客户端尚未握手,下一步应调用 `initialize`;
+- 接入的服务器死亡/会话过期:HTTP 会自动重握手一次并重放原请求,
+  stdio 则信号 `mcp-connection-error`(重连需重新构造客户端)。
+
+### initialize / mcp-ping / close-mcp-client
+
+```lisp
+(clh-mcp:initialize client &key timeout)  ; → (values 协商版本 server-info)
+(clh-mcp:mcp-ping client &key timeout)    ; → T
+(clh-mcp:close-mcp-client client)         ; 幂等;HTTP 按 DELETE 结束会话
+```
+
+- `initialize` 执行版本协商并记录服务器信息;重复调用直接返回已协商结果;
+- 协商失败(服务器回应不在支持范围内)时信号 `mcp-error` 并关闭连接。
+
+### list-tools / call-tool
+
+```lisp
+(clh-mcp:list-tools client &key force timeout)  ; → 原始工具描述列表(带缓存)
+(clh-mcp:call-tool client name arguments &key timeout)
+    ; → (values 文本结果 IS-ERROR-P 完整result)
+```
+
+- `arguments` 为 `:OBJ` 形态;`tools/list` 自动翻页并缓存
+  (收到 `notifications/tools/list_changed` 自动失效,`:force t` 强制刷新);
+- 协议级错误(未知工具等 JSON-RPC error)信号 `mcp-error`(带错误码);
+- `IS-ERROR-P` 为真表示服务器报告的业务失败(`result.isError`)。
+
+### mcp-tools-from-server(工具桥接)
+
+```lisp
+(clh-mcp:mcp-tools-from-server client &key (name-prefix "mcp") force timeout)
+```
+
+把服务器工具转换为 `clh-tools:tool` 对象,与内置工具同等并入
+`make-agent :tools` 使用:名字 `mcp__<server>__<tool>`,`inputSchema` 经
+`make-tool*` 零损失携带,`readOnlyHint` 映射只读分级(默认审批模式下
+变更类工具走人工确认),`isError` 与协议错误转为可回喂模型的 `tool-error`。
+
+### 条件与杂项
+
+| 条件 | 含义 |
+|---|---|
+| `mcp-error` | 基类;JSON-RPC error object 附带错误码(`mcp-error-code`)与 `data` |
+| `mcp-timeout` | 请求超时;超时前尽力发送 `notifications/cancelled` 取消通知 |
+| `mcp-connection-error` | 进程启动失败、写入失败、断连等;连接不可再用 |
+
+- 每个请求可带 `:timeout`(秒),默认 30,客户端级可用 `:default-timeout` 覆盖;
+- `register-request-handler`:注册服务器→客户端请求的处理器;未注册方法
+  按规范回 -32601(ping 内置应答);
+- 服务器通知经 `:notification-callback` 回调;`tools/list_changed` 自动使
+  工具缓存失效。
+
+### 命令行零代码接入
+
+```bash
+bin/cl-harness --mcp "NAME=CMD[+ARG…]" --mcp "NAME=@URL[+TOKEN]" "任务"
+```
+
+REPL 中 `/mcp` 查看服务器状态、`/tools` 查看全部工具;完整细节见
+[docs/mcp.md](mcp.md),真实 HTTPS 部署示例见 [mcp/README.md](../mcp/README.md)。

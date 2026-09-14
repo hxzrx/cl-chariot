@@ -1,0 +1,63 @@
+# CL-Harness 持续集成:SBCL 与 CCL 双实现全量测试(离线,无需任何密钥)
+#
+# 说明:
+#   - MCP 离线套件依赖 runner 自带的 python3(假服务器为纯标准库实现);
+#   - LLM 真机套件(CLH_LIVE)与 MCP 真机套件(CLH_MCP_URL)未设环境变量
+#     时自动跳过,因此 CI 不需要任何 API Key;
+#   - Quicklisp 安装到 ~/quicklisp(与 tests/run.sh 的默认预期一致)。
+
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        lisp: [sbcl, ccl]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Common Lisp 实现(${{ matrix.lisp }})
+        run: |
+          set -e
+          if [ "${{ matrix.lisp }}" = "sbcl" ]; then
+            sudo apt-get update
+            sudo apt-get install -y sbcl
+          else
+            curl -L -o /tmp/ccl.tar.gz \
+              https://github.com/Clozure/ccl/releases/download/v1.12.1/ccl-1.12.1-linuxx86.tar.gz
+            sudo mkdir -p /opt/ccl
+            sudo tar xzf /tmp/ccl.tar.gz -C /opt/ccl --strip-components=1
+            sudo ln -s /opt/ccl/lx86cl64 /usr/local/bin/ccl
+          fi
+          python3 --version
+
+      - name: 安装 Quicklisp
+        run: |
+          curl -o /tmp/quicklisp-setup.lisp https://beta.quicklisp.org/quicklisp-setup.lisp
+          if [ "${{ matrix.lisp }}" = "sbcl" ]; then
+            sbcl --noinform --non-interactive --load /tmp/quicklisp-setup.lisp
+          else
+            ccl -n -b --load /tmp/quicklisp-setup.lisp
+          fi
+
+      - name: 缓存 Quicklisp 依赖
+        uses: actions/cache@v4
+        with:
+          path: ~/quicklisp
+          key: quicklisp-${{ matrix.lisp }}-${{ hashFiles('**/*.asd') }}
+          restore-keys: quicklisp-${{ matrix.lisp }}-
+
+      - name: 注册 ASDF source-registry
+        run: |
+          mkdir -p ~/.config/common-lisp/source-registry.conf.d
+          echo '(:directory "${{ github.workspace }}")' \
+            > ~/.config/common-lisp/source-registry.conf.d/cl-harness.conf
+
+      - name: 运行全量测试
+        run: CLH_LISP=${{ matrix.lisp }} tests/run.sh

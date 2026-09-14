@@ -8,6 +8,11 @@
   工具名在启动时报错(防拼写错误静默缺席)。
 
 ### 新增
+- **持续集成(GitHub Actions)**:`.github/workflows/ci.yml`,SBCL 与 CCL
+  矩阵全量测试(push/pull_request 触发);测试入口 `tests/run.sh` 支持
+  `CLH_LISP=sbcl|ccl` 选择实现;CI 无需任何 API Key(真机套件自动跳过)。
+- **docs/api.md 补 MCP API 参考**:双传输构造、握手、tools 调用与桥接、
+  条件体系与命令行接入。
 - **CLI 集成 MCP 服务器(`--mcp`)**:命令行与 REPL 零代码接入 MCP 服务器。
   SPEC 支持 stdio(`NAME=CMD[+ARG…]`)与 Streamable HTTP
   (`NAME=@URL[+TOKEN]`,Bearer 鉴权)两种形式,可多次传入接入多台;
