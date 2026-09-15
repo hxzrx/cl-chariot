@@ -62,11 +62,5 @@ jobs:
           key: quicklisp-${{ matrix.lisp }}-${{ hashFiles('**/*.asd') }}
           restore-keys: quicklisp-${{ matrix.lisp }}-
 
-      - name: 注册 ASDF source-registry
-        run: |
-          mkdir -p ~/.config/common-lisp/source-registry.conf.d
-          echo '(:directory "${{ github.workspace }}")' \
-            > ~/.config/common-lisp/source-registry.conf.d/cl-harness.conf
-
       - name: 运行全量测试
         run: CLH_LISP=${{ matrix.lisp }} tests/run.sh

@@ -3,6 +3,15 @@
 ## [Unreleased]
 
 ### 修复
+- **CI 修复测试入口 `tests/run.sh`**:其一,裸 `(asdf:load-system ...)`
+  依赖 quicklisp 并不提供的"缺失依赖自动从 dist 安装"行为,CI 上报
+  fiveam not found;改用 `(ql:quickload :cl-harness/test)` 递归安装。
+  其二,SBCL 的 `--eval` 整表单先读后评,`(require :asdf)` 求值前
+  `asdf:` 符号即被读取,在未预载 ASDF 的 SBCL(如 apt 版)直接
+  reader 报错;现统一先 `--load ~/quicklisp/setup.lisp` 再 eval。
+  其三,由 run.sh 自行向 ASDF 注册仓库目录,不再依赖外部
+  source-registry 配置(ci.yml 相应步骤移除)。SBCL 2.6.8 / CCL 1.13
+  干净环境(假 HOME + 全新 Quicklisp)全量离线测试双通过。
 - **CI 修复 Quicklisp 安装**:官方引导文件 `quicklisp-setup.lisp` 已从
   beta.quicklisp.org 移除(下载到的实为 S3 403 XML 错误页,Lisp 加载即
   崩),改按官网指引下载 `quicklisp.lisp` 并校验官方 sha256,再以

@@ -8,21 +8,26 @@
 set -e
 cd "$(dirname "$0")/.."
 
-LOAD_TEST='(asdf:load-system :cl-harness/test)'
+# 注意:必须用 ql:quickload 而非裸 asdf:load-system——quicklisp setup
+# 并不为 ASDF 提供“找不到即从 dist 安装”的钩子,裸 load-system 只能看到
+# 本地已安装的系统;ql:quickload 才会递归安装缺失依赖。
+# 另:所有 eval 表单统一排在 --load setup.lisp 之后,避免在 ASDF/Quicklisp
+# 包尚不存在时被读取;并自行向 ASDF 注册当前仓库目录,不依赖外部
+# ~/.config/common-lisp 的 source-registry 配置(CI 与新机器开箱即用)。
+LOAD_TEST='(ql:quickload :cl-harness/test)'
 RUN='(let ((failed (clh-test:run-all))) (uiop:quit (if (zerop failed) 0 1)))'
+REGISTER='(asdf:initialize-source-registry (list :source-registry (list :directory (uiop:getcwd)) :inherit-configuration))'
 
 case "${CLH_LISP:-sbcl}" in
-  sbcl)
-    exec sbcl --noinform --non-interactive \
-      --eval "(progn (require :asdf) (load \"~/quicklisp/setup.lisp\") $LOAD_TEST)" \
-      --eval "$RUN" ;;
-  ccl)
-    exec ccl -n -b \
-      --load ~/quicklisp/setup.lisp \
-      --eval "(require :asdf)" \
-      --eval "$LOAD_TEST" \
-      --eval "$RUN" ;;
+  sbcl) LISP="sbcl --noinform --non-interactive" ;;
+  ccl)  LISP="ccl -n -b" ;;
   *)
     echo "未知实现:CLH_LISP=$CLH_LISP(支持 sbcl / ccl)" >&2
     exit 2 ;;
 esac
+
+exec $LISP \
+  --load ~/quicklisp/setup.lisp \
+  --eval "$REGISTER" \
+  --eval "$LOAD_TEST" \
+  --eval "$RUN"
