@@ -39,11 +39,20 @@ jobs:
 
       - name: 安装 Quicklisp
         run: |
-          curl -o /tmp/quicklisp-setup.lisp https://beta.quicklisp.org/quicklisp-setup.lisp
+          set -e
+          # quicklisp-setup.lisp 已从 beta.quicklisp.org 移除(S3 返回 403 XML
+          # 错误页),改用官方指引的 quicklisp.lisp 快速入门文件,并校验其
+          # 官方公布 sha256,再调用 quickstart:install 完成 ~/quicklisp 安装。
+          curl -fsSL -o /tmp/quicklisp.lisp https://beta.quicklisp.org/quicklisp.lisp
+          echo '4a7a5c2aebe0716417047854267397e24a44d0cce096127411e9ce9ccfeb2c17  /tmp/quicklisp.lisp' \
+            | sha256sum -c -
           if [ "${{ matrix.lisp }}" = "sbcl" ]; then
-            sbcl --noinform --non-interactive --load /tmp/quicklisp-setup.lisp
+            sbcl --noinform --non-interactive \
+              --load /tmp/quicklisp.lisp \
+              --eval '(quicklisp-quickstart:install)'
           else
-            ccl -n -b --load /tmp/quicklisp-setup.lisp
+            ccl -n -b --load /tmp/quicklisp.lisp \
+              --eval '(quicklisp-quickstart:install)'
           fi
 
       - name: 缓存 Quicklisp 依赖

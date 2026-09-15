@@ -3,6 +3,11 @@
 ## [Unreleased]
 
 ### 修复
+- **CI 修复 Quicklisp 安装**:官方引导文件 `quicklisp-setup.lisp` 已从
+  beta.quicklisp.org 移除(下载到的实为 S3 403 XML 错误页,Lisp 加载即
+  崩),改按官网指引下载 `quicklisp.lisp` 并校验官方 sha256,再以
+  `(quicklisp-quickstart:install)` 安装至 `~/quicklisp`;SBCL / CCL
+  双实现本地端到端验证(安装、装 dist、quickload)。
 - **`--tools` 选项真正生效**:该选项此前仅被解析、从未参与工具装配;
   现按逗号分隔的白名单对合并后的工具集(内置 + MCP)统一筛选,未知
   工具名在启动时报错(防拼写错误静默缺席)。
