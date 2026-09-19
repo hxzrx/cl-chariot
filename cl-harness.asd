@@ -23,7 +23,7 @@
   :description "CL-Harness 基础层:纯函数工具集、JSON 编解码、消息模型"
   :author "cl-harness contributors"
   :license "MIT"
-  :version "0.6.0"
+  :version "0.7.0"
   :depends-on ()
   :pathname "src/"
   :serial t
@@ -52,8 +52,9 @@
                (:file "tools-builtin")))
 
 (defsystem "cl-harness/agent"
-  :description "CL-Harness 智能体核心:主循环、上下文裁剪、审批策略、会话持久化"
-  :depends-on ("uiop" "cl-harness/base" "cl-harness/llm" "cl-harness/tools")
+  :description "CL-Harness 智能体核心:主循环、上下文压缩、审批策略、会话持久化"
+  :depends-on ("uiop" "bordeaux-threads" "cl-harness/base" "cl-harness/llm"
+               "cl-harness/tools")
   :pathname "src/"
   :serial t
   :components ((:file "packages")

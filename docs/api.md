@@ -133,6 +133,7 @@ grep-files / run-command / fetch-url)见 `src/world.lisp` 头注与
 | `:ask-callback` | NIL | `(lambda (tool-name))` → 非 NIL 放行;缺省时变更类一律拒绝 |
 | `:verify-callback` | NIL | `(lambda (run-result))` → 非 NIL 表示目标达成;见下方「目标验证门」 |
 | `:compaction-fn` | NIL | `(lambda (被省略消息列表))` → (values 摘要文本 用量);超预算时把被丢弃历史折叠为摘要,失败降级纯裁剪;见下方「摘要压缩」 |
+| `:parallel-tools` | T | 一轮工具调用全部只读时是否并行执行(三段式:计划/执行/收尾);并行只影响墙钟时间,事件流与工具消息顺序保持确定;NIL 恢复全顺序 |
 | `:on-event` | NIL | `(lambda (event-plist))`,见 §5 |
 | `:trim-tokens` | NIL | 上下文预算;NIL 不裁剪 |
 | `:session-file` | NIL | JSONL 路径;非 NIL 即启用持久化(含事件镜像与配置摘要,见 §6) |

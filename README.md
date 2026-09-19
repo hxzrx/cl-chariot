@@ -4,7 +4,7 @@
 DeepSeek / Qwen / GLM / OpenAI 等多种大模型,提供可编程的智能体主循环、工具系统、
 审批策略与会话持久化。既可以**作为程序库嵌入大型项目**,也附带**命令行交互前端(CLI)**。
 
-- 版本:0.6.0 · 许可:MIT
+- 版本:0.7.0 · 许可:MIT
 - 实现要求:任意 ANSI Common Lisp(已在 SBCL 2.6 与 CCL 1.13 上全部测试通过,不使用任何实现特定特性)
 - 设计目标:以依赖库的形式集成到大项目中,驾驭复杂的行业智能体
 
@@ -16,7 +16,7 @@ DeepSeek / Qwen / GLM / OpenAI 等多种大模型,提供可编程的智能体主
 |---|---|
 | 多厂商 Provider | 内置 DeepSeek / Qwen(通义百炼)/ GLM(智谱)/ OpenAI 预设,任意 OpenAI 兼容端点均可接入 |
 | 流式输出 | SSE 流式解析,文本/思考(reasoning)增量经事件回调逐段交付 |
-| 智能体主循环 | 「模型 → 工具调用 → 结果回喂」多轮循环;轮数/上下文/成本/循环停滞四重护栏 |
+| 智能体主循环 | 「模型 → 工具调用 → 结果回喂」多轮循环;轮数/上下文/成本/循环停滞四重护栏;整轮只读工具并行执行(事件与消息顺序保持确定) |
 | 工具系统 | `define-tool` 声明式定义工具;自动生成 JSON Schema;内置 bash/read/write/edit/glob/grep/web-fetch 七件;执行世界 seam(`make-builtin-tools :world`)把文件/进程/网络访问与工具面分离,可注入路径受限世界 |
 | MCP 接入 | stdio + Streamable HTTP 双传输 MCP 客户端(协议 2025-11-25,向下兼容);工具零损失桥接;会话过期自动重握手;超时/取消/断连收场 |
 | 审批策略 | yolo / default / readonly 三种模式 + 工具黑白名单 + 可编程询问回调 |
@@ -122,7 +122,7 @@ demo/run.sh          # 依次运行三个渐进式示例
 ### 4. 运行测试
 
 ```bash
-tests/run.sh                          # 离线全量测试(882 项断言)
+tests/run.sh                          # 离线全量测试(946 项断言)
 CLH_LIVE=1 tests/run.sh               # 附加真机联调(需 API Key)
 ```
 
@@ -220,8 +220,7 @@ cl-harness/
 
 以下是尚未实现、但架构已预留接缝的能力:
 
-- **工具并行执行**——工具已带 `readonly-p` 并行安全分级,执行器仍为顺序(确定性优先);
-- **更强沙箱形态**——两层沙箱已落地:`make-path-bound-world`(路径前缀
+- **进程级沙箱**——两层沙箱已落地:`make-path-bound-world`(路径前缀
   边界,逻辑边界)+ `make-bwrap-world`(bubblewrap 进程隔离:只读基础
   系统、工作区绑定、默认无网络、IPC/PID/UTS 隔离,`bwrap-usable-p`
   预探测);容器编排等形态留作扩展(执行世界 seam 见 `src/world.lisp`);

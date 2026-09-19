@@ -27,13 +27,13 @@ LOG 为可选 cons 单元(收集每次调用收到的消息序列),供断言使�
 (defun make-loop-agent (chat-fn &rest extra
                         &key tools permission-mode on-event max-turns system-prompt
                           allowed-tools disallowed-tools ask-callback
-                          trim-tokens compaction-fn session-file max-total-tokens
-                          max-identical-turns verify-callback)
+                          trim-tokens compaction-fn parallel-tools session-file
+                          max-total-tokens max-identical-turns verify-callback)
   "构造用于循环测试的智能体(provider 为占位配置,不会被调用)。
 未显式给出的参数使用与生产一致的默认(全部内置工具、yolo 模式等)。"
   (declare (ignore permission-mode on-event max-turns system-prompt
                    allowed-tools disallowed-tools ask-callback trim-tokens
-                   compaction-fn session-file max-total-tokens
+                   compaction-fn parallel-tools session-file max-total-tokens
                    max-identical-turns verify-callback))
   (let* ((given-keys (loop for rest-plist on extra by #'cddr
                            collect (first rest-plist)))
@@ -876,3 +876,151 @@ LOG 为可选 cons 单元(收集每次调用收到的消息序列),供断言使�
         (is (= 0 corrupt))
         (is (plusp (length (session-compact-hints records))))
         (is (null (session-recording-break (car turn-log) records)))))))
+
+;;; ---------- 并行工具执行(只读整轮并行,事件/消息顺序确定) ----------
+
+(defun make-probe-tools (hits)
+  "三个只读探针工具,各自只写自己的标记槽(HITS 三元素,槽间无共享写)。"
+  (list
+   (make-tool :name "probe-1" :description "探针一" :readonly-p t
+              :handler (lambda (args) (declare (ignore args))
+                         (setf (first hits) t) "结果一"))
+   (make-tool :name "probe-2" :description "探针二" :readonly-p t
+              :handler (lambda (args) (declare (ignore args))
+                         (setf (second hits) t) "结果二"))
+   (make-tool :name "probe-3" :description "探针三" :readonly-p t
+              :handler (lambda (args) (declare (ignore args))
+                         (setf (third hits) t) "结果三"))))
+
+(defun run-probe-round (parallel)
+  "跑一轮三探针调用,返回 (VALUES 事件列表 工具消息列表 探针标记)。"
+  (let* ((hits (list nil nil nil))
+         (events '())
+         (script (list (lambda ()
+                         (make-assistant-message
+                          :tool-calls (list (make-tool-call "c1" "probe-1" "{}")
+                                            (make-tool-call "c2" "probe-2" "{}")
+                                            (make-tool-call "c3" "probe-3" "{}"))))
+                       (lambda () (make-assistant-message :content "完成"))))
+         (agent (make-loop-agent (make-scripted-chat-fn script)
+                                 :tools (make-probe-tools hits)
+                                 :parallel-tools parallel
+                                 :on-event (lambda (e) (push e events))))
+         (result (run agent "并行读取三份资料")))
+    (setf events (nreverse events))
+    (values events
+            (remove-if-not (lambda (m) (string= "tool" (message-role m)))
+                           (result-messages result))
+            hits)))
+
+(test parallel-round-readonly-in-order
+  ;; 全只读轮:并行执行,事件与工具消息顺序保持调用顺序
+  (multiple-value-bind (events tool-msgs hits)
+      (run-probe-round t)
+    (declare (ignore tool-msgs))
+    (is (every #'identity hits))
+    (is (equal '((:tool-call "c1") (:tool-call "c2") (:tool-call "c3")
+                 (:tool-result "c1") (:tool-result "c2") (:tool-result "c3"))
+               (mapcar (lambda (e) (list (getf e :kind) (getf e :call-id)))
+                       (remove-if-not
+                        (lambda (e) (member (getf e :kind) '(:tool-call :tool-result)))
+                        events))))))
+
+(test sequential-round-readonly-in-order
+  ;; 关闭并行(:parallel-tools NIL):行为与顺序时代完全一致
+  (multiple-value-bind (events tool-msgs hits)
+      (run-probe-round nil)
+    (declare (ignore events))
+    (is (every #'identity hits))
+    (is (equal '("c1" "c2" "c3") (mapcar #'message-tool-call-id tool-msgs)))
+    (is (equal '("结果一" "结果二" "结果三")
+               (mapcar #'message-content tool-msgs)))))
+
+(defun make-session-probe-agent (session turn-log)
+  "带会话落盘的三探针智能体(并行轮 + 审计)。"
+  (make-loop-agent
+   (capture-turns-chat-fn
+    (make-scripted-chat-fn
+     (list (lambda ()
+             (make-assistant-message
+              :tool-calls (list (make-tool-call "c1" "probe-1" "{}")
+                                (make-tool-call "c2" "probe-2" "{}")
+                                (make-tool-call "c3" "probe-3" "{}"))))
+           (lambda () (make-assistant-message :content "完成"))))
+    turn-log)
+   :tools (make-probe-tools (list nil nil nil))
+   :session-file session))
+
+(test tool-messages-follow-call-order-with-session
+  ;; 并行轮的消息落盘与会话不变量
+  (uiop:with-temporary-file (:pathname session-path :type "jsonl")
+    (let* ((session (namestring session-path))
+           (turn-log (list nil))
+           (agent (make-session-probe-agent session turn-log))
+           (result (run agent "并行并持久化")))
+      (setf (car turn-log) (nreverse (car turn-log)))
+      (is (eq :end (result-stop-reason result)))
+      (let ((tool-msgs (remove-if-not (lambda (m) (string= "tool" (message-role m)))
+                                      (result-messages result))))
+        (is (equal '("c1" "c2" "c3") (mapcar #'message-tool-call-id tool-msgs))))
+      (multiple-value-bind (records corrupt) (session-load session)
+        (is (= 0 corrupt))
+        (is (null (session-recording-break (car turn-log) records)))))))
+
+(test mixed-round-stays-sequential-and-runs-all
+  ;; 含变更类工具的轮次:整体顺序执行(策略),全部照常执行
+  (let* ((ro-called nil)
+         (events '())
+         (tools (list
+                 (make-tool :name "writer" :description "变更工具" :readonly-p nil
+                            :handler (lambda (args) (declare (ignore args)) "已写入"))
+                 (make-tool :name "ro-probe" :description "只读探针" :readonly-p t
+                            :handler (lambda (args) (declare (ignore args))
+                                       (setf ro-called t) "只读结果"))))
+         (script (list (lambda ()
+                         (make-assistant-message
+                          :tool-calls (list (make-tool-call "c1" "writer" "{}")
+                                            (make-tool-call "c2" "ro-probe" "{}"))))
+                       (lambda () (make-assistant-message :content "完成"))))
+         (agent (make-loop-agent (make-scripted-chat-fn script)
+                                 :tools tools :permission-mode :yolo
+                                 :on-event (lambda (e) (push e events))))
+         (result (run agent "先写再读")))
+    (declare (ignore events))
+    (is (eq :end (result-stop-reason result)))
+    (is (eq t ro-called))
+    (let ((tool-msgs (remove-if-not (lambda (m) (string= "tool" (message-role m)))
+                                    (result-messages result))))
+      (is (equal '("c1" "c2") (mapcar #'message-tool-call-id tool-msgs)))
+      (is (equal '("已写入" "只读结果") (mapcar #'message-content tool-msgs))))))
+
+(test parallel-round-denial
+  ;; 并行轮中的审批拒绝:拒绝者在计划期即定,执行期返回失败结果,其余照常
+  (let* ((events '())
+         (hits (list nil nil))
+         (tools (list
+                 (make-tool :name "probe-a" :description "探针A" :readonly-p t
+                            :handler (lambda (args) (declare (ignore args))
+                                       (setf (first hits) t) "结果A"))
+                 (make-tool :name "probe-b" :description "探针B" :readonly-p t
+                            :handler (lambda (args) (declare (ignore args))
+                                       (setf (second hits) t) "结果B"))))
+         (script (list (lambda ()
+                         (make-assistant-message
+                          :tool-calls (list (make-tool-call "c1" "probe-a" "{}")
+                                            (make-tool-call "c2" "probe-b" "{}"))))
+                       (lambda () (make-assistant-message :content "完成"))))
+         (agent (make-loop-agent (make-scripted-chat-fn script)
+                                 :tools tools :permission-mode :yolo
+                                 :disallowed-tools '("probe-b")
+                                 :on-event (lambda (e) (push e events))))
+         (result (run agent "x")))
+    (declare (ignore result))
+    (is (eq t (first hits)))
+    (is (null (second hits)))
+    (let ((denied (find-if (lambda (e) (eq (getf e :kind) :permission-denied)) events)))
+      (is (string= "c2" (getf denied :call-id))))
+    (let* ((tool-msgs (remove-if-not (lambda (m) (string= "tool" (message-role m)))
+                                     (result-messages result)))
+           (b (find "c2" tool-msgs :key #'message-tool-call-id :test #'string=)))
+      (is (search "权限拒绝" (message-content b))))))

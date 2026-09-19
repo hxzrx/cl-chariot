@@ -79,6 +79,7 @@
    #:session-recording-break
    #:agent-compaction-fn #:default-compaction-fn
    #:+compaction-instruction+ #:build-summary-message #:splice-summary
+   #:agent-parallel-tools
    #:emit-event)
   (:import-from :clh
    #:+version+ #:make-subagent-tool)

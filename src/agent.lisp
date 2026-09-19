@@ -82,6 +82,9 @@ COMPACT-FN        摘要压缩器 (LAMBDA (被省略消息列表)) → (VALUES �
                   用量对象)。上下文超预算时先尝试把被丢弃历史折叠为摘要,
                   折叠失败(返回空或异常)降级为纯裁剪;摘要调用计入用量。
                   NIL(默认)= 纯裁剪。内置实现见 DEFAULT-COMPACTION-FN;
+PARALLEL-TOOLS    一轮工具调用全部只读时是否并行执行(默认 T)。
+                  并行只影响墙钟时间:事件流与工具消息顺序保持确定;
+                  置 NIL 恢复全顺序执行。见 EXECUTE-TOOL-CALLS;
 SESSION-FILE      会话 JSONL 文件路径;NIL 表示不持久化;
 CHAT-FN           模型调用注入点(见 CALL-CHAT);
 TEMPERATURE/MAX-TOKENS  覆盖 Provider 默认采样参数;
@@ -99,6 +102,7 @@ MAX-TOTAL-TOKENS        单次运行累计 token 预算,超限即停(:BUDGET);NI
   (on-event nil)
   (trim-tokens nil)
   (compaction-fn nil)
+  (parallel-tools t)
   (session-file nil)
   (chat-fn nil)
   (temperature nil)
@@ -110,6 +114,7 @@ MAX-TOTAL-TOKENS        单次运行累计 token 预算,超限即停(:BUDGET);NI
                                     permission-mode allowed-tools disallowed-tools
                                     ask-callback verify-callback on-event
                                     trim-tokens compaction-fn
+                                    (parallel-tools t)
                                     session-file chat-fn temperature max-tokens
                                     max-total-tokens)
   "构造智能体配置。所有参数见 AGENT 结构文档。
@@ -117,7 +122,7 @@ MAX-TOTAL-TOKENS        单次运行累计 token 预算,超限即停(:BUDGET);NI
   (declare (ignore provider tools system-prompt max-turns max-identical-turns
                    permission-mode allowed-tools disallowed-tools ask-callback
                    verify-callback on-event trim-tokens compaction-fn
-                   session-file chat-fn temperature max-tokens
+                   parallel-tools session-file chat-fn temperature max-tokens
                    max-total-tokens))
   (apply #'%make-agent keys))
 
@@ -301,6 +306,7 @@ TURNS         实际执行的 LLM 调用轮数。"
                  (cons "max_total_tokens" (or (agent-max-total-tokens agent) :null))
                  (cons "verify_gate" (if (agent-verify-callback agent) :true :false))
                  (cons "compaction_fn" (if (agent-compaction-fn agent) :true :false))
+                 (cons "parallel_tools" (if (agent-parallel-tools agent) :true :false))
                  (cons "tools" (or tool-names '()))
                  (cons "system_prompt_digest" (fnv-1a-hex prompt)))))
     (append cells
@@ -345,60 +351,124 @@ TURNS         实际执行的 LLM 调用轮数。"
     (error (e)
       (values nil nil (format nil "~A" e)))))
 
-(defun execute-tool-call (agent tool-call)
-  "执行单个工具调用(审批 → 执行 → 计时 → 事件),返回 tool 消息。
-本函数从不信号条件:一切失败都编码为失败工具结果,循环得以继续。"
-  (let* ((call-id (clh-msg:tool-call-id tool-call))
-         (name (clh-msg:tool-call-name tool-call))
-         (args (clh-msg:tool-call-args tool-call))
-         (tool (clh-tools:find-tool (agent-tools agent) name)))
-    (emit-event agent (list :kind :tool-call :tool-name name
-                            :call-id call-id
-                            :arguments (clh-msg:tool-call-arguments tool-call)))
-    (multiple-value-bind (result error-p)
-        (if (null tool)
-            (values (format nil "[工具错误] 未知工具:~A(可用:~{~A~^, ~})"
-                            name
-                            (mapcar #'clh-tools:tool-name (agent-tools agent)))
-                    t)
-            (execute-with-permission agent tool name args call-id))
-      ;; 返回消息:(role "tool") 与调用 ID 对应,失败与否都以结果文本回喂模型
-      (clh-msg:make-tool-message call-id result))))
+;;; ---------------------------------------------------------------------------
+;;; 内部:工具调用执行(计划 → 执行 → 收尾,只读整轮可并行)
+;;; ---------------------------------------------------------------------------
 
-(defun execute-with-permission (agent tool name args call-id)
-  "带审批的工具执行:拒绝 → 拒绝事件 + 失败结果;放行 → 执行 + 结果事件。
-返回 (VALUES 结果文本 失败标记)。"
-  (multiple-value-bind (decision reason)
-      (decide-permission name (clh-tools:tool-readonly-p tool)
-                         :mode (agent-permission-mode agent)
-                         :allowed-tools (agent-allowed-tools agent)
-                         :disallowed-tools (agent-disallowed-tools agent)
-                         :ask-callback (agent-ask-callback agent))
-    (if (eq decision :deny)
-        (progn
-          (emit-event agent (list :kind :permission-denied
-                                  :tool-name name :call-id call-id
-                                  :reason reason))
-          (values (format nil "[权限拒绝] 工具 ~A 未能通过审批:~A" name reason)
-                  t))
-        (let ((start (get-internal-real-time)))
-          (multiple-value-bind (out err-p)
-              (clh-tools:execute-tool tool args)
-            (emit-event agent (list :kind :tool-result
-                                    :tool-name name :call-id call-id
-                                    :result out :error-p err-p
-                                    :duration (clh-util:format-duration
-                                               (- (get-internal-real-time) start))))
-            (values out err-p))))))
+(defstruct (tool-task (:constructor %make-tool-task (call tool name args-raw)))
+  "一轮工具调用的执行计划(内部结构)。
+审批在计划期顺序完成,执行期只填结果——因此事件流与消息顺序保持
+确定,并行只发生在副作用阶段(见 EXECUTE-TOOL-CALLS)。"
+  call tool name args-raw
+  (allowed-p nil)
+  (deny-reason "")
+  (result "")
+  (error-p nil)
+  (duration ""))
+
+(defun tool-task-call-id (task)
+  "任务的调用 ID。"
+  (clh-msg:tool-call-id (tool-task-call task)))
+
+(defun plan-tool-call (agent task)
+  "计划期:发 :TOOL-CALL 事件并完成审批(顺序执行,保证事件流确定)。"
+  (emit-event agent (list :kind :tool-call
+                          :tool-name (tool-task-name task)
+                          :call-id (tool-task-call-id task)
+                          :arguments (tool-task-args-raw task)))
+  (let ((tool (tool-task-tool task)))
+    (when tool
+      (multiple-value-bind (decision reason)
+          (decide-permission (tool-task-name task)
+                             (clh-tools:tool-readonly-p tool)
+                             :mode (agent-permission-mode agent)
+                             :allowed-tools (agent-allowed-tools agent)
+                             :disallowed-tools (agent-disallowed-tools agent)
+                             :ask-callback (agent-ask-callback agent))
+        (setf (tool-task-allowed-p task) (not (eq decision :deny))
+              (tool-task-deny-reason task) (or reason ""))))))
+
+(defun run-tool-task (agent task)
+  "执行单个已计划的任务:权限拒绝与未知工具在此编码为失败结果,
+工具调用失败同样不逃逸。无事件、无持久化——可在工作线程中运行;
+TASK 只被本线程写入(结果槽),主线程在汇合后读取。"
+  (let ((start (get-internal-real-time)))
+    (multiple-value-bind (out err-p)
+        (let ((tool (tool-task-tool task)))
+          (cond ((null tool)
+                 (values (format nil "[工具错误] 未知工具:~A(可用:~{~A~^, ~})"
+                                 (tool-task-name task)
+                                 (mapcar #'clh-tools:tool-name (agent-tools agent)))
+                         t))
+                ((not (tool-task-allowed-p task))
+                 (values (format nil "[权限拒绝] 工具 ~A 未能通过审批:~A"
+                                 (tool-task-name task)
+                                 (tool-task-deny-reason task))
+                         t))
+                (t (clh-tools:execute-tool
+                    tool
+                    (clh-msg:tool-call-args (tool-task-call task))))))
+      (setf (tool-task-result task) out
+            (tool-task-error-p task) err-p
+            (tool-task-duration task)
+            (clh-util:format-duration (- (get-internal-real-time) start))))))
+
+(defun collect-tool-task (agent task)
+  "收尾期:按调用顺序发 :TOOL-RESULT / :PERMISSION-DENIED 事件,
+返回对应的 tool 消息(失败与否都以结果文本回喂模型)。"
+  (if (and (tool-task-tool task) (not (tool-task-allowed-p task)))
+      (emit-event agent (list :kind :permission-denied
+                              :tool-name (tool-task-name task)
+                              :call-id (tool-task-call-id task)
+                              :reason (tool-task-deny-reason task)))
+      (emit-event agent (list :kind :tool-result
+                              :tool-name (tool-task-name task)
+                              :call-id (tool-task-call-id task)
+                              :result (tool-task-result task)
+                              :error-p (tool-task-error-p task)
+                              :duration (tool-task-duration task))))
+  (clh-msg:make-tool-message (tool-task-call-id task)
+                             (tool-task-result task)))
 
 (defun execute-tool-calls (agent tool-calls)
-  "顺序执行一轮的全部工具调用,返回 tool 消息列表。
-工具本身可能并行安全,但 v1 保持顺序执行——确定性与可解释性优先,并行留待后续。"
-  (let ((results '()))
-    (dolist (call tool-calls (nreverse results))
-      (let ((message (execute-tool-call agent call)))
-        (persist-message agent message)
-        (push message results)))))
+  "执行一轮的全部工具调用,返回与调用顺序一致的 tool 消息列表。
+三段式:① 计划——审批与 :TOOL-CALL 事件,顺序(事件流确定);
+② 执行——整轮全部只读且 :PARALLEL-TOOLS 开启时在工作线程并行,
+否则顺序;③ 收尾——结果事件与消息落盘,按调用顺序。
+只读工具承诺无副作用,因此并行只影响墙钟时间,不改变事件顺序、
+消息顺序与会话落盘(落盘只在主线程收尾期发生)。"
+  (let ((tasks (mapcar (lambda (call)
+                         (%make-tool-task call
+                                          (clh-tools:find-tool
+                                           (agent-tools agent)
+                                           (clh-msg:tool-call-name call))
+                                          (clh-msg:tool-call-name call)
+                                          (clh-msg:tool-call-arguments call)))
+                       tool-calls)))
+    ;; ① 计划:审批 + 宣告(顺序)
+    (dolist (task tasks)
+      (plan-tool-call agent task))
+    ;; ② 执行:整轮只读 → 并行;否则顺序
+    (if (and (agent-parallel-tools agent)
+             (every (lambda (task)
+                      (and (tool-task-tool task)
+                           (clh-tools:tool-readonly-p (tool-task-tool task))))
+                    tasks))
+        (let ((threads (mapcar (lambda (task)
+                                 (bordeaux-threads:make-thread
+                                  (lambda () (run-tool-task agent task))
+                                  :name "clh-tool"))
+                               tasks)))
+          (dolist (thread threads)
+            (bordeaux-threads:join-thread thread)))
+        (dolist (task tasks)
+          (run-tool-task agent task)))
+    ;; ③ 收尾:事件与落盘(按调用顺序)
+    (mapcar (lambda (task)
+              (let ((message (collect-tool-task agent task)))
+                (persist-message agent message)
+                message))
+            tasks)))
 
 ;;; ---------------------------------------------------------------------------
 ;;; 主循环

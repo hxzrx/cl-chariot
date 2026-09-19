@@ -13,7 +13,7 @@
 
 (declaim (optimize (speed 1) (safety 3) (debug 3)))
 
-(defparameter +cli-version+ "0.6.0"
+(defparameter +cli-version+ "0.7.0"
   "CLI 版本号(与库版本同步)。")
 
 ;;; ANSI 颜色辅助(不做 TTY 探测,靠 --no-color 关闭)

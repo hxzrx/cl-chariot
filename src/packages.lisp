@@ -203,6 +203,7 @@ HTTP 传输通过动态变量 *http-post-fn* 注入,便于测试与替换。")
    #:agent-verify-callback
    #:agent-on-event
    #:agent-trim-tokens
+   #:agent-parallel-tools
    #:agent-session-file
    #:agent-chat-fn
    #:agent-temperature
