@@ -44,12 +44,14 @@
 
 (defun trim-messages-with-stats (messages budget)
   "把 MESSAGES 裁剪到 BUDGET(估算 token)以内,返回
-(VALUES 裁剪结果 省略条数 省略估算token数)。
-不超预算时原样返回 (VALUES MESSAGES 0 0)。
+(VALUES 裁剪结果 省略条数 省略估算token数 提示消息)。
+不超预算时原样返回 (VALUES MESSAGES 0 0 NIL)。
 裁剪结果满足:全部 system 消息保留;开头无孤儿 tool 消息;
-被裁剪时以一条带省略统计的 user 提示消息开头告知模型历史不完整。"
+被裁剪时以一条带省略统计的 user 提示消息开头告知模型历史不完整。
+提示消息只进入发送副本(主线程消息序列保持完整),第 4 个返回值把它
+交出供 :COMPACT 事件留痕——「模型可见即已记录」要求它进会话日志。"
   (if (<= (estimate-messages-tokens messages) budget)
-      (values messages 0 0)
+      (values messages 0 0 nil)
       (multiple-value-bind (system rest) (split-system messages)
         (let* ((system-tokens (estimate-messages-tokens system))
                (rest-tokens (estimate-messages-tokens rest))
@@ -66,17 +68,18 @@
           (loop while (and kept (orphan-tool-p (first kept)))
                 do (pop kept))
           (let* ((elided (- (length rest) (length kept)))
-                 (elided-tokens (- rest-tokens used)))
+                 (elided-tokens (- rest-tokens used))
+                 (hint (when (and (plusp elided) kept)
+                         (clh-msg:make-user-message
+                          (format nil "[系统提示:为控制上下文长度,已省略较早的 ~D 条消息(约 ~:D tokens)。以下是保留的最近部分。]"
+                                  elided elided-tokens)))))
             (values
-             (append
-              system
-              (when (and (plusp elided) kept)
-                (list (clh-msg:make-user-message
-                       (format nil "[系统提示:为控制上下文长度,已省略较早的 ~D 条消息(约 ~:D tokens)。以下是保留的最近部分。]"
-                               elided elided-tokens))))
-              kept)
+             (append system
+                     (when hint (list hint))
+                     kept)
              elided
-             elided-tokens))))))
+             elided-tokens
+             hint))))))
 
 (defun trim-messages (messages budget)
   "把 MESSAGES 裁剪到 BUDGET(估算 token)以内;不超预算时原样返回(同一列表)。

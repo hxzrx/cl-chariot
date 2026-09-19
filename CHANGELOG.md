@@ -1,5 +1,38 @@
 # 更新日志
 
+## [Unreleased]
+
+### 新增
+- **会话回放投影**:SESSION-MESSAGES-AT 把日志投影到任意序号的消息历史
+  (任意时刻切片);SESSION-EVENTS + SESSION-RECORD->EVENT 把事件镜像
+  无损还原回事件 plist,可离线重喂 :ON-EVENT 消费方(确定性回放);
+  另有 SESSION-META / SESSION-CONFIG / SESSION-CONFIG-DIGEST /
+  SESSION-STOP-REASON 审计取值。
+- **会话检索**:SESSION-FILTER 按「种类/工具名/失败与否/停止原因/消息
+  角色/序号区间」组合筛选;SESSION-SEARCH 面向解码后的文本值做子串检索
+  (CJK 不受 JSON 转义影响,大小写可选折叠),支持路径或已加载记录两种入参。
+- **会话分叉(SESSION-FORK)**:把会话文件的前缀(序号 ≤ UPTO-SEQ)原样
+  复制到新文件并追加 fork 标记记录(来源路径与截取点,携带新序号);
+  分叉文件直接作为 :SESSION-FILE 使用时序号接续不回绕,配合
+  :MESSAGES (SESSION-MESSAGES-AT …) 即从历史任意点继续——
+  止损重试 / what-if 对比 / 回归留存的库形态基元。
+- **「模型可见即已记录」不变量(SESSION-RECORDING-BREAK)**:校验凡进入
+  模型上下文的消息必有记录;「已记录」集合 = message 记录 +
+  :COMPACT 事件携带的裁剪提示消息(SESSION-COMPACT-HINTS)。
+  违例返回断裂点(:kind :not-recorded :turn :message);测试套件对每条
+  带会话文件的脚本化运行强制执行。测试断言新会话满足强形态:
+  日志消息序列与最终消息序列完全一致。
+- `clh-json:json-object-p` 转正为公开导出(内部表示的判定谓词)。
+
+### 修复
+- **续跑时新追加的 prompt 消息此前不落盘**:RUN 的 :MESSAGES 续跑模式
+  只落盘 assistant/tool 消息,新追加的 user 消息「模型可见而未记录」,
+  审计链在续跑起点断裂;现改为只跳过来自前缀的既有消息,新追加部分
+  照常落盘。
+- **裁剪提示消息此前不入日志**:TRIM-MESSAGES-WITH-STATS 注入发送副本的
+  「已省略 N 条」提示只给模型看、无任何记录;现在它作为第 4 个返回值
+  交出,随 :COMPACT 事件(新增 :hint 载荷)入日志。
+
 ## [0.4.0] - 2026-09-19
 
 ### 新增

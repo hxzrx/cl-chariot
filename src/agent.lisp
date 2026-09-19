@@ -152,10 +152,12 @@ MAX-TOTAL-TOKENS        单次运行累计 token 预算,超限即停(:BUDGET);NI
                              (cons "error_p" (bool (getf event :error-p)))
                              (cons "duration" (getf event :duration))))
                       (:compact
-                       (list (cons "turn" (getf event :turn))
-                             (cons "elided_messages" (getf event :elided-messages))
-                             (cons "elided_tokens" (getf event :elided-tokens))
-                             (cons "budget" (getf event :budget))))
+                       (append (list (cons "turn" (getf event :turn))
+                                     (cons "elided_messages" (getf event :elided-messages))
+                                     (cons "elided_tokens" (getf event :elided-tokens))
+                                     (cons "budget" (getf event :budget)))
+                               (when (getf event :hint)
+                                 (list (cons "hint" (getf event :hint))))))
                       (:stall
                        (list (cons "turn" (getf event :turn))
                              (cons "streak" (getf event :streak))
@@ -385,8 +387,13 @@ MAX-TURNS 覆盖配置中的轮数上限。
                         (or *session-logger* (agent-session-file agent))
                         (agent-provider agent)
                         (ignore-errors (config-digest agent))))
-        (unless messages
-          (dolist (m start-messages) (persist-message agent m))))
+        ;; 新会话:初始消息全部落盘;续跑:既有消息已在其来源日志中,
+        ;; 只落盘新追加的部分(即 PROMPT 对应的 user 消息)——
+        ;; 否则它「模型可见而未记录」,续跑的审计链在起点断裂
+        (dolist (m (if messages
+                       (nthcdr (length messages) start-messages)
+                       start-messages))
+          (persist-message agent m)))
       (loop for turn from 1
             with msgs = start-messages
             with usage = (clh-llm:zero-usage)
@@ -405,17 +412,19 @@ MAX-TURNS 覆盖配置中的轮数上限。
                      (return result)))
                  (emit-event agent (list :kind :turn-start :turn turn))
                  ;; 上下文裁剪(只影响发送副本,主线程消息与会话文件始终完整);
-                 ;; 实际裁剪发生时发 :COMPACT 事件留痕
-                 (multiple-value-bind (request-messages elided elided-tokens)
+                 ;; 实际裁剪发生时发 :COMPACT 事件留痕(提示消息随事件入日志,
+                 ;; 否则它「模型可见而未记录」,审计链在裁剪处断裂)
+                 (multiple-value-bind (request-messages elided elided-tokens hint)
                      (if (agent-trim-tokens agent)
                          (trim-messages-with-stats msgs (agent-trim-tokens agent))
-                         (values msgs 0 0))
+                         (values msgs 0 0 nil))
                    (when (plusp elided)
                      (emit-event agent
                                  (list :kind :compact :turn turn
                                        :elided-messages elided
                                        :elided-tokens elided-tokens
-                                       :budget (agent-trim-tokens agent))))
+                                       :budget (agent-trim-tokens agent)
+                                       :hint hint)))
                    (multiple-value-bind (assistant-message turn-usage finish)
                        (handler-case (call-chat agent request-messages)
                          ;; 空回复重试耗尽:以 :EMPTY 收场(消息保留),

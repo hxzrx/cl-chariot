@@ -51,6 +51,7 @@
    #:jref
    #:jref-path
    #:jobj-alist
+   #:json-object-p
    ;; 编码
    #:encode-json
    #:encode-json-to-stream
@@ -234,7 +235,23 @@ HTTP 传输通过动态变量 *http-post-fn* 注入,便于测试与替换。")
    #:session-logger-seq
    #:session-count-records
    #:session-load
-   #:session-messages))
+   #:session-messages
+   ;; 会话回放 / 审计 / 检索 / 分叉 / 不变量
+   #:session-record-kind
+   #:session-record-seq
+   #:session-max-seq
+   #:session-messages-at
+   #:session-events
+   #:session-record->event
+   #:session-meta
+   #:session-config
+   #:session-config-digest
+   #:session-stop-reason
+   #:session-filter
+   #:session-search
+   #:session-fork
+   #:session-compact-hints
+   #:session-recording-break))
 
 (defpackage :clh-mcp
   (:documentation

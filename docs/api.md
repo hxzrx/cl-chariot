@@ -162,7 +162,7 @@ clh-tools:+builtin-tools+     ; 工具列表
 | `:tool-call` | `:tool-name :arguments :call-id` | 审批前 |
 | `:tool-result` | `:tool-name :call-id :result :error-p :duration` | 执行后 |
 | `:permission-denied` | `:tool-name :call-id :reason` | 审批拒绝 |
-| `:compact` | `:turn :elided-messages :elided-tokens :budget` | 上下文实际裁剪时(只影响发送副本) |
+| `:compact` | `:turn :elided-messages :elided-tokens :budget :hint` | 上下文实际裁剪时(只影响发送副本;`:hint` 为注入发送副本的省略提示消息,随事件入日志) |
 | `:stall` | `:turn :streak :signature` | 连续相同工具调用达到上限、即将止损时 |
 | `:verify` | `:passed-p :reason` | 目标验证门判定后(配置了 `:verify-callback` 时) |
 | `:run-end` | `:stop-reason :turns :usage` | 运行结束 |
@@ -199,6 +199,46 @@ meta 记录另携带 `config-digest` 的**配置摘要**(轮数/审批模式/工
 (clh-agent:session-count-records path)            ; 既有记录行数(序号恢复用)
 (clh-agent:config-digest agent)                   ; 配置摘要 alist(含 config_digest 指纹)
 ```
+
+### 回放 / 检索 / 分叉 / 不变量
+
+会话日志是一等数据源,其上提供四组纯函数(输入均为 `session-load` 加载的记录):
+
+```lisp
+;;; 回放:任意时刻的消息投影与事件流还原
+(clh-agent:session-messages-at records seq)       ; seq ≤ N 的消息历史(任意时刻切片)
+(clh-agent:session-events records &key kinds)     ; 事件镜像记录(缺省排除 message/usage/meta/fork)
+(clh-agent:session-record->event record)          ; 还原回事件 plist,可重喂 :on-event 消费方
+
+;;; 审计取值
+(clh-agent:session-meta records)                  ; 最近一次运行的 meta 记录
+(clh-agent:session-config-digest records)         ; 配置指纹(按指纹聚合运行做对比)
+(clh-agent:session-stop-reason records)           ; 最近一次运行的停止原因
+
+;;; 检索
+(clh-agent:session-filter records
+    :kinds '(:tool-result) :tool-name "bash" :error-p t
+    :stop-reason :stalled :role :user :min-seq 2 :max-seq 9)
+(clh-agent:session-search path-or-records "登录") ; 解码文本值的子串检索(CJK 友好)
+
+;;; 分叉:从历史任意点续跑(止损重试 / what-if / 回归留存)
+(multiple-value-bind (count marker)
+    (clh-agent:session-fork "run.jsonl" "fork.jsonl" :upto-seq 7) ...
+;; 从分叉点继续:session-file 指向分叉文件,序号接续不回绕
+(clh:run (clh:make-agent ... :session-file "fork.jsonl")
+         nil :messages (clh-agent:session-messages-at fork-records 7))
+
+;;; 「模型可见即已记录」不变量
+(clh-agent:session-compact-hints records)         ; 裁剪提示消息(「已记录」集合的一部分)
+(clh-agent:session-recording-break sent-turns records)
+;; NIL,或 (:kind :not-recorded :turn n :message m)——审计链断裂点
+```
+
+不变量含义:凡进入模型上下文的消息(含裁剪提示),会话日志里必有记录;
+发送副本可经 `:chat-fn` 注入捕获。本库测试套件对每条带会话文件的脚本化
+运行强制执行该不变量。分叉文件上的派生用法:`session-fork` 复制前缀记录
+并追加 `fork` 标记(来源与截取点),配合 `:messages` 投影即可像 git 分支
+一样做止损重试、what-if 对比与回归留存。
 
 ## 7. 错误处理
 

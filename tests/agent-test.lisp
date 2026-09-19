@@ -586,3 +586,164 @@ LOG 为可选 cons 单元(收集每次调用收到的消息序列),供断言使�
         (is (= 16 (length (jref meta "config_digest"))))
         (is (not (null (jref meta "system_prompt_digest"))))
         (is (not (null (jref meta "max_turns"))))))))
+
+;;; ---------- 会话回放 / 分叉 / 「模型可见即已记录」不变量 ----------
+
+(defun capture-turns-chat-fn (base log-cell)
+  "包装 BASE chat 函数:把每轮收到的发送副本按轮次序收集进 LOG-CELL(car 为列表)。"
+  (lambda (provider messages &rest opts)
+    (push (copy-list messages) (car log-cell))
+    (apply base provider messages opts)))
+
+(defun make-two-turn-script ()
+  "两轮脚本:第一轮工具调用,第二轮文本收场。"
+  (list (lambda () (make-assistant-message
+                    :tool-calls (list (make-tool-call "c1" "bash" "{\"command\":\"echo ok\"}"))))
+        (lambda () (make-assistant-message :content "完成"))))
+
+(test recording-invariant-holds-for-scripted-run
+  ;; 端到端:每轮发送副本捕获自 chat-fn 注入点,逐轮对照会话记录
+  (uiop:with-temporary-file (:pathname session :type "jsonl")
+    (let* ((turn-log (list nil))
+           (agent (make-loop-agent
+                   (capture-turns-chat-fn (make-scripted-chat-fn (make-two-turn-script))
+                                          turn-log)
+                   :session-file (namestring session)))
+           (result (run agent "做一点事")))
+      (setf (car turn-log) (nreverse (car turn-log)))
+      (multiple-value-bind (records corrupt) (session-load (namestring session))
+        (is (= 0 corrupt))
+        ;; 不变量两方向全部成立
+        (is (null (session-recording-break (car turn-log) records)))
+        ;; 强形态:新会话日志里的消息序列与最终消息序列完全一致
+        (is (string= (encode-json (session-messages records))
+                     (encode-json (result-messages result))))
+        ;; 审计取值与运行结果一致
+        (is (eq :end (session-stop-reason records)))
+        (is (stringp (session-config-digest records)))
+        (is (plusp (usage-total-tokens (session-usage-total records))))))))
+
+(test recording-invariant-holds-under-trim
+  ;; 裁剪只影响发送副本:即使触发 :COMPACT,提示消息也随事件入日志,
+  ;; 不变量仍然成立(缺此留痕,裁剪即是不变量的违例点)
+  (uiop:with-temporary-file (:pathname session :type "jsonl")
+    (let* ((turn-log (list nil))
+           (script (list (lambda () (make-assistant-message
+                                      :tool-calls (list (make-tool-call "c1" "read" "{\"path\":\"x\"}"))))
+                         (lambda () (make-assistant-message :content "读完"))))
+           (agent (make-loop-agent
+                   (capture-turns-chat-fn (make-scripted-chat-fn script) turn-log)
+                   :session-file (namestring session)
+                   :trim-tokens 600))
+           (result (run agent (make-string 4000 :initial-element #\a))))
+      (setf (car turn-log) (nreverse (car turn-log)))
+      (is (eq :end (result-stop-reason result)))
+      (multiple-value-bind (records corrupt) (session-load (namestring session))
+        (is (= 0 corrupt))
+        ;; 裁剪确实发生:有发送副本短于最终消息序列
+        (is (some (lambda (sent) (< (length sent) (length (result-messages result))))
+                  (car turn-log)))
+        ;; 提示消息随 :COMPACT 事件入日志
+        (let ((hints (session-compact-hints records)))
+          (is (= 1 (length hints)))
+          (is (search "省略" (message-content (first hints)))))
+        ;; 不变量成立
+        (is (null (session-recording-break (car turn-log) records)))))))
+
+(test recording-invariant-resume-same-file
+  ;; 同一文件续跑:单次运行校验用 require-sent-back NIL(前缀消息不由本次重发);
+  ;; 两轮运行合并的发送副本则满足全量校验
+  (uiop:with-temporary-file (:pathname session :type "jsonl")
+    (let* ((p (namestring session))
+           (run1 (run (make-loop-agent (make-scripted-chat-fn (make-two-turn-script))
+                                       :session-file p)
+                      "第一阶段"))
+           (turn-log2 (list nil))
+           (run2 (run (make-loop-agent
+                       (capture-turns-chat-fn
+                        (make-scripted-chat-fn
+                         (list (lambda () (make-assistant-message :content "收尾"))))
+                        turn-log2)
+                       :session-file p)
+                      "第二阶段" :messages (result-messages run1))))
+      (declare (ignore run2))
+      (setf (car turn-log2) (nreverse (car turn-log2)))
+      (multiple-value-bind (records corrupt) (session-load p)
+        (is (= 0 corrupt))
+        ;; 续跑新追加的 prompt 消息已落盘(缺此即审计链在续跑起点断裂)
+        (is (member "第二阶段"
+                    (mapcar #'message-content (session-messages records))
+                    :test #'string=))
+        ;; 本轮发送副本全部有记录
+        (is (null (session-recording-break (car turn-log2) records)))
+        ;; 续跑后的完整历史可从日志还原
+        (is (string= "收尾" (last-assistant-text (session-messages records))))))))
+
+(test fork-continues-run-from-history
+  ;; 从历史任意点分叉续跑:像 git 分支一样做止损重试
+  (uiop:with-temporary-file (:pathname src :type "jsonl")
+    (uiop:with-temporary-file (:pathname dst :type "jsonl")
+      (let* ((s (namestring src))
+             (d (namestring dst))
+             (run1 (run (make-loop-agent (make-scripted-chat-fn (make-two-turn-script))
+                                         :session-file s)
+                        "原任务")))
+        (multiple-value-bind (records corrupt) (session-load s)
+          (is (= 0 corrupt))
+          ;; 截取点:tool 结果消息之后(调用+结果成对,是协议合法的续跑状态)
+          (let* ((tool-msg (first (session-filter records
+                                                  :kinds '(:message) :role :tool)))
+                 (cut (session-record-seq tool-msg)))
+            ;; 分叉到 cut:历史在此定格,续跑让模型重新决策
+            (multiple-value-bind (count marker) (session-fork s d :upto-seq cut)
+              (is (plusp count))
+              (is (eq :fork (session-record-kind marker)))
+              (is (= cut (jref marker "upto_seq"))))
+            (multiple-value-bind (fork-records fork-corrupt) (session-load d)
+              (is (= 0 fork-corrupt))
+              (is (eq :fork (session-record-kind (first (last fork-records)))))
+              ;; 从分叉点续跑(提示词为空:原样续跑,不追加 user 消息)
+              (let* ((turn-log (list nil))
+                     (run2 (run (make-loop-agent
+                                 (capture-turns-chat-fn
+                                  (make-scripted-chat-fn
+                                   (list (lambda () (make-assistant-message :content "换个思路完成"))))
+                                  turn-log)
+                                 :session-file d)
+                                nil
+                                :messages (session-messages-at fork-records cut))))
+                (declare (ignore run2))
+                (setf (car turn-log) (nreverse (car turn-log)))
+                (multiple-value-bind (after after-corrupt) (session-load d)
+                  (is (= 0 after-corrupt))
+                  ;; 续跑追加在分叉之后,序号不回绕
+                  (is (> (session-max-seq after) cut))
+                  (is (string= "换个思路完成" (last-assistant-text (session-messages after))))
+                  ;; 本轮发送副本全部有记录(分叉文件的前缀历史不在其内)
+                  (is (null (session-recording-break (car turn-log) after))))))))))))
+
+(test session-query-over-real-run
+  ;; 审批拒绝的运行:事件镜像与审计取值可直接用于检索
+  (uiop:with-temporary-file (:pathname session :type "jsonl")
+    (let* ((script (list (lambda () (make-assistant-message
+                                     :tool-calls (list (make-tool-call "c1" "bash" "{\"command\":\"echo no\"}"))))
+                         (lambda () (make-assistant-message :content "那就这样"))))
+           (agent (make-loop-agent (make-scripted-chat-fn script)
+                                   :session-file (namestring session)
+                                   :permission-mode :default)))
+      (let ((result (run agent "试试看")))
+        (is (eq :end (result-stop-reason result))))
+      (multiple-value-bind (records corrupt) (session-load (namestring session))
+        (is (= 0 corrupt))
+        (is (= 1 (length (session-filter records :kinds '(:permission-denied)))))
+        (is (plusp (length (session-search records "权限拒绝"))))
+        (is (eq :end (session-stop-reason records)))
+        (is (stringp (session-config-digest records)))
+        ;; 回放事件流可还原出与运行中同构的事件种类
+        (let ((kinds (mapcar (lambda (e) (getf e :kind))
+                             (mapcar #'session-record->event (session-events records)))))
+          (is (member :run-start kinds))
+          (is (member :permission-denied kinds))
+          (is (member :run-end kinds))
+          ;; 审批拒绝时不执行工具,故无 :tool-result
+          (is (not (member :tool-result kinds))))))))

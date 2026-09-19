@@ -68,6 +68,11 @@
    #:session-messages #:session-usage-total #:+default-system-prompt+
    #:make-session-logger #:session-logger-p #:session-logger-seq
    #:session-count-records
+   #:session-record-kind #:session-record-seq #:session-max-seq
+   #:session-messages-at #:session-events #:session-record->event
+   #:session-meta #:session-config #:session-config-digest
+   #:session-stop-reason #:session-filter #:session-search
+   #:session-fork #:session-compact-hints #:session-recording-break
    #:emit-event)
   (:import-from :clh
    #:+version+ #:make-subagent-tool)
