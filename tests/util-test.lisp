@@ -5,6 +5,16 @@
 (def-suite util-suite :description "clh-util 基础工具集")
 (in-suite util-suite)
 
+;;; ---------- 非加密散列 ----------
+
+(test fnv-1a-standard-vectors
+  ;; FNV-1a 64 位官方标准测试向量(跨实现一致性由显式 2^64 截断保证)
+  (is (string= "cbf29ce484222325" (fnv-1a-hex "")))
+  (is (string= "af63dc4c8601ec8c" (fnv-1a-hex "a")))
+  (is (string= "85944171f73967e8" (fnv-1a-hex "foobar")))
+  ;; 多参数依次拼接(与单参数拼接结果一致)
+  (is (string= (fnv-1a-hex "foo" "bar") (fnv-1a-hex "foobar"))))
+
 ;;; ---------- 字符串 ----------
 
 (test join-string

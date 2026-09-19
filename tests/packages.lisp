@@ -9,7 +9,7 @@
    #:join-string #:split-string #:split-lines #:string-blank-p #:trim-whitespace
    #:clamp-string #:kebab->snake #:snake->kebab-keyword #:alist-ref #:alist-set
    #:merge-alists #:gen-id #:estimate-text-tokens #:simple-diff
-   #:format-duration)
+   #:format-duration #:fnv-1a-hex)
   (:import-from :clh-json
    #:parse-json #:encode-json #:jref #:jref-path #:jobj-alist #:json-object-p
    #:+json-null+ #:+json-false+ #:+json-true+ #:json-parse-error #:json-encode-error)
@@ -28,6 +28,7 @@
    #:zero-usage #:add-usage #:usage-total-tokens #:usage-prompt-tokens
    #:usage-completion-tokens
    #:api-error #:api-error-status #:api-key-missing
+   #:empty-response-error #:empty-response-p
    #:build-chat-body #:response->triple #:make-accumulator #:acc-apply-delta
    #:accumulator->message #:accumulator->tool-calls)
   (:import-from :clh-tools
@@ -61,8 +62,12 @@
    #:agent #:make-agent #:run-result
    #:result-messages #:result-text #:result-usage #:result-stop-reason
    #:result-turns #:estimate-message-tokens #:estimate-messages-tokens
-   #:trim-messages #:decide-permission #:session-append #:session-load
+   #:trim-messages #:trim-messages-with-stats #:tool-calls-signature
+   #:config-digest
+   #:decide-permission #:session-append #:session-record #:session-load
    #:session-messages #:session-usage-total #:+default-system-prompt+
+   #:make-session-logger #:session-logger-p #:session-logger-seq
+   #:session-count-records
    #:emit-event)
   (:import-from :clh
    #:+version+ #:make-subagent-tool)

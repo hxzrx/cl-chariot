@@ -37,6 +37,18 @@
 5. 回答使用与用户一致的语言。")
   "智能体默认系统提示词;可通过 MAKE-AGENT 的 :SYSTEM-PROMPT 覆盖。")
 
+(defparameter *default-max-identical-turns* 4
+  "连续相同工具调用轮数的默认上限(循环瘫痪护栏)。
+同一组「工具名+参数原文」的调用连续出现达到上限时,判定模型已陷入
+重复循环(读循环/参数拼错重试等),以 :STALLED 停止而非烧完轮数预算。
+实测 4 次足够宽容合法的重复,又能及时止损;置 NIL(:MAX-IDENTICAL-TURNS)
+可关闭该检测。")
+
+(defparameter *session-logger* nil
+  "当前运行绑定的会话写入器(动态变量)。RUN 为 :SESSION-FILE 运行时创建并绑定;
+子智能体等嵌套运行会重新绑定——未启用持久化的嵌套运行绑定 NIL,
+其事件不会泄入外层会话文件。")
+
 ;;; ---------------------------------------------------------------------------
 ;;; 智能体配置
 ;;; ---------------------------------------------------------------------------
@@ -47,9 +59,14 @@ PROVIDER          模型服务配置(CLH-LLM:LLM-CONFIG);
 TOOLS             可用工具列表(CLH-TOOLS:TOOL);
 SYSTEM-PROMPT     系统提示词;NIL 时用 +DEFAULT-SYSTEM-PROMPT+;
 MAX-TURNS         最大轮数护栏,防止无限循环(默认 40);
+MAX-IDENTICAL-TURNS  连续相同工具调用轮数上限(默认 4,见
+                  *DEFAULT-MAX-IDENTICAL-TURNS*;NIL 关闭检测);
 PERMISSION-MODE   审批模式 :yolo / :default / :readonly;
 ALLOWED-DISALLOWED  工具名单(见 permission.lisp);
 ASK-CALLBACK      变更类工具的审批回调 (LAMBDA (TOOL-NAME)) → 非 NIL 放行;
+VERIFY-CALLBACK   目标验证门 (LAMBDA (RUN-RESULT)) → 非 NIL 表示目标达成。
+                  仅在自然结束(:END)前调用;返回 NIL 或回调异常都按失败处理
+                  (fail-closed),停止原因降级 :UNVERIFIED。NIL(默认)关闭该门;
 ON-EVENT          事件回调 (LAMBDA (EVENT-PLIST));可嵌套包装;
 TRIM-TOKENS       上下文 token 预算;NIL 表示不裁剪;
 SESSION-FILE      会话 JSONL 文件路径;NIL 表示不持久化;
@@ -60,10 +77,12 @@ MAX-TOTAL-TOKENS        单次运行累计 token 预算,超限即停(:BUDGET);NI
   (tools '())
   (system-prompt nil)
   (max-turns 40)
+  (max-identical-turns 4)
   (permission-mode :default)
   (allowed-tools '())
   (disallowed-tools '())
   (ask-callback nil)
+  (verify-callback nil)
   (on-event nil)
   (trim-tokens nil)
   (session-file nil)
@@ -73,26 +92,95 @@ MAX-TOTAL-TOKENS        单次运行累计 token 预算,超限即停(:BUDGET);NI
   (max-total-tokens nil))
 
 (defun make-agent (&rest keys &key provider tools system-prompt max-turns
+                                    max-identical-turns
                                     permission-mode allowed-tools disallowed-tools
-                                    ask-callback on-event trim-tokens
+                                    ask-callback verify-callback on-event
+                                    trim-tokens
                                     session-file chat-fn temperature max-tokens
                                     max-total-tokens)
   "构造智能体配置。所有参数见 AGENT 结构文档。
 最小用法:(make-agent :provider (clh-llm:make-provider :deepseek))。"
-  (declare (ignore provider tools system-prompt max-turns permission-mode
-                   allowed-tools disallowed-tools ask-callback on-event
-                   trim-tokens session-file chat-fn temperature max-tokens
-                   max-total-tokens))
+  (declare (ignore provider tools system-prompt max-turns max-identical-turns
+                   permission-mode allowed-tools disallowed-tools ask-callback
+                   verify-callback on-event trim-tokens session-file chat-fn
+                   temperature max-tokens max-total-tokens))
   (apply #'%make-agent keys))
 
 (defun emit-event (agent event)
-  "向智能体的事件回调交付一个事件(EVENT 为 plist,含 :KIND 键)。
+  "向智能体的事件回调交付一个事件(EVENT 为 plist,含 :KIND 键),
+并把事件镜像写入当前会话文件(见 MIRROR-EVENT-TO-SESSION)。
 回调自身的失败不应当打断运行——事件消费方的 bug 被降级为警告打印。"
   (let ((hook (agent-on-event agent)))
     (when hook
       (handler-case (funcall hook event)
         (error (e)
-          (format *error-output* "~&[cl-harness] 事件回调异常(已忽略):~A~%" e))))))
+          (format *error-output* "~&[cl-harness] 事件回调异常(已忽略):~A~%" e)))))
+  (mirror-event-to-session event))
+
+;;; ---------------------------------------------------------------------------
+;;; 内部:事件镜像落盘
+;;; ---------------------------------------------------------------------------
+
+(defun event->json-record (event)
+  "把事件 plist 转为可编码的 :OBJ 记录(键为 snake_case 字符串)。
+关键字值(事件种类/停止原因)转为小写字符串;布尔值转 :TRUE/:FALSE。
+未知事件种类降级为只含 kind 的记录——镜像必须对事件演化前向兼容。"
+  (labels ((kw (x) (if (keywordp x) (string-downcase (symbol-name x)) x))
+           (bool (x) (if x :true :false)))
+    (let ((kind (getf event :kind)))
+      (cons :obj
+            (append (list (cons "kind" (kw kind)))
+                    (case kind
+                      (:run-start
+                       (list (cons "prompt" (getf event :prompt))))
+                      (:turn-start
+                       (list (cons "turn" (getf event :turn))))
+                      (:assistant-message
+                       (list (cons "message" (getf event :message))))
+                      (:tool-call
+                       (list (cons "tool_name" (getf event :tool-name))
+                             (cons "call_id" (getf event :call-id))
+                             (cons "arguments" (getf event :arguments))))
+                      (:permission-denied
+                       (list (cons "tool_name" (getf event :tool-name))
+                             (cons "call_id" (getf event :call-id))
+                             (cons "reason" (getf event :reason))))
+                      (:tool-result
+                       (list (cons "tool_name" (getf event :tool-name))
+                             (cons "call_id" (getf event :call-id))
+                             (cons "result" (getf event :result))
+                             (cons "error_p" (bool (getf event :error-p)))
+                             (cons "duration" (getf event :duration))))
+                      (:compact
+                       (list (cons "turn" (getf event :turn))
+                             (cons "elided_messages" (getf event :elided-messages))
+                             (cons "elided_tokens" (getf event :elided-tokens))
+                             (cons "budget" (getf event :budget))))
+                      (:stall
+                       (list (cons "turn" (getf event :turn))
+                             (cons "streak" (getf event :streak))
+                             (cons "signature" (getf event :signature))))
+                      (:verify
+                       (list (cons "passed_p" (bool (getf event :passed-p)))
+                             (cons "reason" (getf event :reason))))
+                      (:run-end
+                       (list (cons "stop_reason" (kw (getf event :stop-reason)))
+                             (cons "turns" (getf event :turns))
+                             (cons "usage" (getf event :usage))))
+                      ;; :text-delta / :reasoning-delta 不落盘——完整的
+                      ;; assistant 消息会以 message 记录单独写入;
+                      ;; 其余未知种类仅记 kind
+                      (t nil)))))))
+
+(defun mirror-event-to-session (event)
+  "把事件镜像为 event 记录写入当前会话文件(*SESSION-LOGGER* 绑定时)。
+消息本体(message/usage/meta 记录)由主循环另行落盘,此处只镜像事件;
+镜像失败静默忽略——可观测性缺陷不应当影响运行本身。"
+  (when *session-logger*
+    (let ((kind (getf event :kind)))
+      (unless (member kind '(:text-delta :reasoning-delta))
+        (ignore-errors
+          (session-record *session-logger* (event->json-record event)))))))
 
 ;;; ---------------------------------------------------------------------------
 ;;; 运行结果
@@ -103,7 +191,8 @@ MAX-TOTAL-TOKENS        单次运行累计 token 预算,超限即停(:BUDGET);NI
 MESSAGES      完整消息序列(含初始 system/user 与最终全部轮次);
 TEXT          最后一条含文本的 assistant 消息(最终答复;可能为 NIL);
 USAGE         累计用量(:OBJ:prompt_tokens/completion_tokens/total_tokens);
-STOP-REASON   停止原因 :END / :MAX-TURNS / :BUDGET / :LENGTH / :EMPTY;
+STOP-REASON   停止原因 :END / :UNVERIFIED / :MAX-TURNS / :BUDGET / :LENGTH
+              / :EMPTY / :STALLED;
 TURNS         实际执行的 LLM 调用轮数。"
   messages
   text
@@ -150,9 +239,43 @@ TURNS         实际执行的 LLM 调用轮数。"
 ;;; ---------------------------------------------------------------------------
 
 (defun persist-message (agent message)
-  "会话文件存在时把消息落盘。"
+  "会话文件存在时把消息落盘(经运行绑定的 SESSION-LOGGER,携带序号)。"
   (when (agent-session-file agent)
-    (ignore-errors (session-log-message (agent-session-file agent) message))))
+    (ignore-errors (session-log-message
+                    (or *session-logger* (agent-session-file agent))
+                    message))))
+
+(defun tool-calls-signature (tool-calls)
+  "把一轮工具调用压缩为签名字符串(工具名+参数原文,顺序敏感)。
+用于循环瘫痪检测:签名逐轮相同的连续轮数达到上限即判为停滞。"
+  (when tool-calls
+    (format nil "~{~A~^&~}"
+            (mapcar (lambda (call)
+                      (format nil "~A|~A"
+                              (clh-msg:tool-call-name call)
+                              (clh-msg:tool-call-arguments call)))
+                    tool-calls))))
+
+(defun config-digest (agent)
+  "计算智能体配置摘要,返回可并入 JSON 记录的 alist(字符串键)。
+含可读字段与两个非加密散列(系统提示词的 system_prompt_digest、
+覆盖上述全部字段的 config_digest),用于会话 meta 记录——
+事后审计可回答「当时跑的是什么配置」;同配置跨运行摘要一致。"
+  (let* ((tool-names (mapcar #'clh-tools:tool-name (agent-tools agent)))
+         (prompt (or (agent-system-prompt agent) +default-system-prompt+))
+         (cells (list
+                 (cons "max_turns" (agent-max-turns agent))
+                 (cons "max_identical_turns" (agent-max-identical-turns agent))
+                 (cons "permission_mode"
+                       (string-downcase (symbol-name (agent-permission-mode agent))))
+                 (cons "trim_tokens" (or (agent-trim-tokens agent) :null))
+                 (cons "max_total_tokens" (or (agent-max-total-tokens agent) :null))
+                 (cons "verify_gate" (if (agent-verify-callback agent) :true :false))
+                 (cons "tools" (or tool-names '()))
+                 (cons "system_prompt_digest" (fnv-1a-hex prompt)))))
+    (append cells
+            (list (cons "config_digest"
+                        (fnv-1a-hex (encode-json (cons :obj cells))))))))
 
 (defun execute-tool-call (agent tool-call)
   "执行单个工具调用(审批 → 执行 → 计时 → 事件),返回 tool 消息。
@@ -231,86 +354,158 @@ TURNS         实际执行的 LLM 调用轮数。"
   "运行智能体:PROMPT 为用户任务描述;MESSAGES 给出时在既有对话上续跑。
 MAX-TURNS 覆盖配置中的轮数上限。
 
-返回 RUN-RESULT。永不信号模型/工具层的一般错误:
-  - 模型调用失败:重试耗尽后以 :ERROR 停止原因返回(错误文本置于结果之前由
-    条件系统保留——见下),或向上传播 API-ERROR(属调用方需感知的基础设施故障);
-  - 工具失败:回喂模型,不中断。
+返回 RUN-RESULT。停止原因:
+  :END 正常结束(配置了 :VERIFY-CALLBACK 时已通过目标验证) |
+  :UNVERIFIED 目标验证未通过(fail-closed:回调返回 NIL 或异常,消息保留) |
+  :LENGTH 触达长度上限 | :MAX-TURNS 轮数护栏 |
+  :BUDGET 累计 token 护栏 | :STALLED 连续相同工具调用护栏 |
+  :EMPTY 重试后仍为空回复(消息保留,不向上传播)。
+空回复之外的模型基础设施故障(API-ERROR 等)向上传播,由调用方感知;
+工具失败不是循环失败:作为失败结果回喂模型,循环继续。
 
 事件序列(:KIND 键):
   :RUN-START(:PROMPT) → {:TURN-START(:TURN) → :TEXT-DELTA/:REASONING-DELTA(:TEXT)
   → :ASSISTANT-MESSAGE(:MESSAGE) → :TOOL-CALL(:TOOL-NAME :ARGUMENTS :CALL-ID)
-  → [:PERMISSION-DENIED] → :TOOL-RESULT(:RESULT :ERROR-P :DURATION)}* → :RUN-END
-  (:STOP-REASON :TURNS :USAGE)"
-  (let* ((effective-max-turns (or max-turns (agent-max-turns agent) 40))
-         (start-messages (initial-messages agent prompt :messages messages))
-         (system-prompt-message (first start-messages)))
-    (emit-event agent (list :kind :run-start :prompt prompt))
-    (when (agent-session-file agent)
-      ;; 新会话或续跑都补一条 meta,便于事后审计
-      (ignore-errors (session-log-meta (agent-session-file agent)
-                                       (agent-provider agent)))
-      (unless messages
-        (dolist (m start-messages) (persist-message agent m))))
-    (loop for turn from 1
-          with msgs = start-messages
-          with usage = (clh-llm:zero-usage)
-          with final-text = nil
-          do (progn
-               ;; 轮数护栏
-               (when (> turn effective-max-turns)
-                 (let ((result (%make-run-result
-                                :messages msgs :text final-text :usage usage
-                                :stop-reason :max-turns :turns (1- turn))))
-                   (emit-event agent (list :kind :run-end
-                                           :stop-reason :max-turns
-                                           :turns (1- turn) :usage usage))
-                   (return result)))
-               (emit-event agent (list :kind :turn-start :turn turn))
-               ;; 上下文裁剪(首轮消息量小,通常原样通过)
-               (let ((request-messages
-                       (if (agent-trim-tokens agent)
-                           (trim-messages msgs (agent-trim-tokens agent))
-                           msgs)))
-                 ;; 首轮不需要重复裁剪提示的 user 消息……裁剪函数只在超预算时介入,
-                 ;; 首轮 msgs 即 start-messages,保持原样即可
-                 (multiple-value-bind (assistant-message turn-usage finish)
-                     (call-chat agent request-messages)
-                   (setf usage (clh-llm:add-usage usage turn-usage)
-                         msgs (append msgs (list assistant-message)))
-                   (persist-message agent assistant-message)
-                   (when (agent-session-file agent)
-                     (ignore-errors (session-log-usage (agent-session-file agent) turn-usage)))
-                   (emit-event agent (list :kind :assistant-message
-                                           :message assistant-message))
-                   ;; token 预算护栏:累计用量超限即停(避免成本失控)
-                   (let ((budget (agent-max-total-tokens agent)))
-                     (when (and budget (> (usage-total-tokens usage) budget))
-                       (let ((result (%make-run-result
-                                      :messages msgs :text final-text :usage usage
-                                      :stop-reason :budget :turns turn)))
-                         (emit-event agent (list :kind :run-end
-                                                 :stop-reason :budget
-                                                 :turns turn :usage usage))
-                         (return result))))
-                   (let ((content (clh-msg:message-content assistant-message)))
-                     (when (and (stringp content) (plusp (length content)))
-                       (setf final-text content)))
-                   (let ((tool-calls (clh-msg:message-tool-calls assistant-message)))
-                     (cond
-                       ;; 正常结束:无工具调用
-                       ((null tool-calls)
-                        (let ((result (%make-run-result
-                                       :messages msgs :text final-text :usage usage
-                                       :stop-reason (if (string= (or finish "") "length")
-                                                        :length :end)
-                                       :turns turn)))
-                          (emit-event agent (list :kind :run-end
-                                                  :stop-reason (run-result-stop-reason result)
-                                                  :turns turn :usage usage))
-                          (return result)))
-                       ;; 有工具调用:执行后进入下一轮
-                       (t
-                        (setf msgs (append msgs (execute-tool-calls agent tool-calls))))))))))))
+  → [:PERMISSION-DENIED] → :TOOL-RESULT(:RESULT :ERROR-P :DURATION)
+  → [:COMPACT(:ELIDED-MESSAGES :ELIDED-TOKENS :BUDGET)]
+  → [:STALL(:TURN :STREAK :SIGNATURE)]}
+  → [:VERIFY(:PASSED-P :REASON)] → :RUN-END(:STOP-REASON :TURNS :USAGE)"
+  (let ((*session-logger* (when (agent-session-file agent)
+                            (ignore-errors (make-session-logger
+                                            (agent-session-file agent))))))
+    (let* ((effective-max-turns (or max-turns (agent-max-turns agent) 40))
+           (start-messages (initial-messages agent prompt :messages messages))
+           (system-prompt-message (first start-messages)))
+      (declare (ignore system-prompt-message))
+      (emit-event agent (list :kind :run-start :prompt prompt))
+      (when (agent-session-file agent)
+        ;; 新会话或续跑都补一条 meta,便于事后审计;
+        ;; 摘要失败不阻塞运行(config-digest 为 NIL 时仅缺配置字段)
+        (ignore-errors (session-log-meta
+                        (or *session-logger* (agent-session-file agent))
+                        (agent-provider agent)
+                        (ignore-errors (config-digest agent))))
+        (unless messages
+          (dolist (m start-messages) (persist-message agent m))))
+      (loop for turn from 1
+            with msgs = start-messages
+            with usage = (clh-llm:zero-usage)
+            with final-text = nil
+            with last-signature = nil
+            with identical-streak = 0
+            do (progn
+                 ;; 轮数护栏
+                 (when (> turn effective-max-turns)
+                   (let ((result (%make-run-result
+                                  :messages msgs :text final-text :usage usage
+                                  :stop-reason :max-turns :turns (1- turn))))
+                     (emit-event agent (list :kind :run-end
+                                             :stop-reason :max-turns
+                                             :turns (1- turn) :usage usage))
+                     (return result)))
+                 (emit-event agent (list :kind :turn-start :turn turn))
+                 ;; 上下文裁剪(只影响发送副本,主线程消息与会话文件始终完整);
+                 ;; 实际裁剪发生时发 :COMPACT 事件留痕
+                 (multiple-value-bind (request-messages elided elided-tokens)
+                     (if (agent-trim-tokens agent)
+                         (trim-messages-with-stats msgs (agent-trim-tokens agent))
+                         (values msgs 0 0))
+                   (when (plusp elided)
+                     (emit-event agent
+                                 (list :kind :compact :turn turn
+                                       :elided-messages elided
+                                       :elided-tokens elided-tokens
+                                       :budget (agent-trim-tokens agent))))
+                   (multiple-value-bind (assistant-message turn-usage finish)
+                       (handler-case (call-chat agent request-messages)
+                         ;; 空回复重试耗尽:以 :EMPTY 收场(消息保留),
+                         ;; 不作为基础设施故障向上传播
+                         (empty-response-error ()
+                           (let ((result (%make-run-result
+                                          :messages msgs :text final-text :usage usage
+                                          :stop-reason :empty :turns turn)))
+                             (emit-event agent (list :kind :run-end
+                                                     :stop-reason :empty
+                                                     :turns turn :usage usage))
+                             (return-from run result))))
+                     (setf usage (clh-llm:add-usage usage turn-usage)
+                           msgs (append msgs (list assistant-message)))
+                     (persist-message agent assistant-message)
+                     (when (agent-session-file agent)
+                       (ignore-errors (session-log-usage
+                                       (or *session-logger* (agent-session-file agent))
+                                       turn-usage)))
+                     (emit-event agent (list :kind :assistant-message
+                                             :message assistant-message))
+                     ;; token 预算护栏:累计用量超限即停(避免成本失控)
+                     (let ((budget (agent-max-total-tokens agent)))
+                       (when (and budget (> (usage-total-tokens usage) budget))
+                         (let ((result (%make-run-result
+                                        :messages msgs :text final-text :usage usage
+                                        :stop-reason :budget :turns turn)))
+                           (emit-event agent (list :kind :run-end
+                                                   :stop-reason :budget
+                                                   :turns turn :usage usage))
+                           (return result))))
+                     (let ((content (clh-msg:message-content assistant-message)))
+                       (when (and (stringp content) (plusp (length content)))
+                         (setf final-text content)))
+                     (let ((tool-calls (clh-msg:message-tool-calls assistant-message)))
+                       (cond
+                         ;; 自然结束:无工具调用
+                         ((null tool-calls)
+                          (let ((result (%make-run-result
+                                         :messages msgs :text final-text :usage usage
+                                         :stop-reason (if (string= (or finish "") "length")
+                                                          :length :end)
+                                         :turns turn)))
+                            ;; 目标验证门:仅拦截自然结束(:END);失败降级 :UNVERIFIED。
+                            ;; 回调异常同样按失败处理(fail-closed)——
+                            ;; 「模型宣称成功」与「目标达成」由此强制分离
+                            (when (and (eq (run-result-stop-reason result) :end)
+                                       (agent-verify-callback agent))
+                              (let ((passed-p nil)
+                                    (reason ""))
+                                (handler-case
+                                    (multiple-value-bind (p r)
+                                        (funcall (agent-verify-callback agent) result)
+                                      (setf passed-p (not (null p))
+                                            reason (or r (if p "验证回调通过" "验证回调返回 NIL"))))
+                                  (error (e)
+                                    (setf reason (format nil "验证回调异常(按失败处理):~A" e))))
+                                (emit-event agent (list :kind :verify
+                                                        :passed-p passed-p :reason reason))
+                                (unless passed-p
+                                  (setf result (%make-run-result
+                                                :messages msgs :text final-text :usage usage
+                                                :stop-reason :unverified :turns turn)))))
+                            (emit-event agent (list :kind :run-end
+                                                    :stop-reason (run-result-stop-reason result)
+                                                    :turns turn :usage usage))
+                            (return result)))
+                         ;; 有工具调用:执行后进入下一轮
+                         (t
+                          (setf msgs (append msgs (execute-tool-calls agent tool-calls)))
+                          ;; 循环瘫痪护栏:连续相同「工具名+参数」调用达到上限,
+                          ;; 判定模型已陷入重复循环,立即止损而非烧完轮数预算
+                          (let ((signature (tool-calls-signature tool-calls))
+                                (limit (agent-max-identical-turns agent)))
+                            (setf identical-streak
+                                  (if (and signature (string= signature last-signature))
+                                      (1+ identical-streak)
+                                      1)
+                                  last-signature signature)
+                            (when (and limit (>= identical-streak limit))
+                              (emit-event agent (list :kind :stall :turn turn
+                                                      :streak identical-streak
+                                                      :signature signature))
+                              (let ((result (%make-run-result
+                                             :messages msgs :text final-text :usage usage
+                                             :stop-reason :stalled :turns turn)))
+                                (emit-event agent (list :kind :run-end
+                                                        :stop-reason :stalled
+                                                        :turns turn :usage usage))
+                                (return result))))))))))))))
 
 ;;; 便捷函数:一步完成「构造 + 运行」,嵌入方最常用
 (defun run-prompt (provider prompt &rest keys &key &allow-other-keys)

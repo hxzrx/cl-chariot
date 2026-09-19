@@ -27,8 +27,11 @@
 
 - `messages`:消息列表(见 §6);
 - `on-delta`:`(lambda (kind text))`,`kind ∈ :text / :reasoning`;
-- 重试策略:429/408/5xx 指数退避;不可重试错误信号 `clh-llm:api-error`;
-- 高级:绑定 `clh-llm:*http-post-fn*` 可整体替换 HTTP 传输(测试/网关)。
+- 重试策略:429/408/5xx 与传输层失败指数退避;「空回复」(2xx 但无文本无工具调用,
+  reasoning 模型常见)同样视为瞬时故障参与重试,耗尽后信号 `clh-llm:empty-response-error`;
+  不可重试错误信号 `clh-llm:api-error`;
+- 高级:绑定 `clh-llm:*http-post-fn*` 可整体替换 HTTP 传输(测试/网关);
+  `empty-response-p` 为空回复形态的公开判定。
 
 ## 2. 工具
 
@@ -78,8 +81,10 @@ clh-tools:+builtin-tools+     ; 工具列表
 
 ```lisp
 (clh:make-agent &key provider tools system-prompt max-turns
+                   max-identical-turns
                    permission-mode allowed-tools disallowed-tools
-                   ask-callback on-event trim-tokens session-file
+                   ask-callback verify-callback on-event
+                   trim-tokens session-file
                    chat-fn temperature max-tokens)
 ```
 
@@ -89,12 +94,23 @@ clh-tools:+builtin-tools+     ; 工具列表
 | `:tools` | `'()` | 工具列表;常用 `clh-tools:+builtin-tools+` |
 | `:system-prompt` | 内置默认 | NIL 时使用 `clh-agent:+default-system-prompt+` |
 | `:max-turns` | 40 | 轮数护栏 |
+| `:max-identical-turns` | 4 | 循环瘫痪护栏:同一组「工具名+参数」连续 N 轮即以 `:stalled` 停止;NIL 关闭 |
 | `:permission-mode` | `:default` | `:yolo` / `:default` / `:readonly` |
 | `:ask-callback` | NIL | `(lambda (tool-name))` → 非 NIL 放行;缺省时变更类一律拒绝 |
+| `:verify-callback` | NIL | `(lambda (run-result))` → 非 NIL 表示目标达成;见下方「目标验证门」 |
 | `:on-event` | NIL | `(lambda (event-plist))`,见 §5 |
 | `:trim-tokens` | NIL | 上下文预算;NIL 不裁剪 |
-| `:session-file` | NIL | JSONL 路径;非 NIL 即启用持久化 |
+| `:session-file` | NIL | JSONL 路径;非 NIL 即启用持久化(含事件镜像与配置摘要,见 §6) |
 | `:chat-fn` | 库默认 | `(lambda (provider messages &rest opts))` 注入点 |
+
+### 目标验证门(:verify-callback)
+
+`run` 在自然结束(`:end`)前调用回调复验目标(如:文件确实改了、记录确实建了)。
+回调收到 RUN-RESULT;**返回 NIL 或回调自身异常都按失败处理(fail-closed)**:
+停止原因降级为 `:unverified`,同时发 `:verify` 事件(`:passed-p :reason`),
+消息序列保留以便排查与续跑。回调为 NIL(默认)时该门完全关闭。
+回调内部可用 `result-text` / `result-messages` 检查产出,验证手段自定
+(重新读文件、查数据库、调检查接口等)——「干净度」由回调自己保证。
 
 ### run / run-prompt
 
@@ -105,7 +121,11 @@ clh-tools:+builtin-tools+     ; 工具列表
 
 - `:messages` 给出时在既有对话上续跑(prompt 追加为新的 user 消息);
 - RUN-RESULT 访问器:`result-messages` `result-text` `result-usage`
-  `result-stop-reason`(`:end` `:max-turns` `:length` `:budget`)`result-turns`;
+  `result-stop-reason`(`:end` `:unverified` `:max-turns` `:length` `:budget`
+  `:stalled` `:empty`)`result-turns`;
+  - `:unverified`:目标验证门未通过(配置了 `:verify-callback` 且回调拒绝/异常);
+  - `:stalled`:连续相同工具调用达到 `:max-identical-turns` 上限(循环瘫痪止损);
+  - `:empty`:模型重试后仍返回空回复(消息保留,不产生条件);
 - 用量对象:`(clh-llm:usage-prompt-tokens u)` / `usage-completion-tokens` / `usage-total-tokens`。
 
 ### 子智能体
@@ -136,12 +156,15 @@ clh-tools:+builtin-tools+     ; 工具列表
 | kind | 载荷 | 时机 |
 |---|---|---|
 | `:run-start` | `:prompt` | 运行开始 |
-| `:turn-start` / `:turn-end` | `:turn` / `:turn :usage` | 每轮 |
+| `:turn-start` | `:turn` | 每轮 |
 | `:text-delta` / `:reasoning-delta` | `:text` | 流式增量(思考型模型的思考走后者) |
 | `:assistant-message` | `:message` | 每条 assistant 消息完成 |
 | `:tool-call` | `:tool-name :arguments :call-id` | 审批前 |
 | `:tool-result` | `:tool-name :call-id :result :error-p :duration` | 执行后 |
 | `:permission-denied` | `:tool-name :call-id :reason` | 审批拒绝 |
+| `:compact` | `:turn :elided-messages :elided-tokens :budget` | 上下文实际裁剪时(只影响发送副本) |
+| `:stall` | `:turn :streak :signature` | 连续相同工具调用达到上限、即将止损时 |
+| `:verify` | `:passed-p :reason` | 目标验证门判定后(配置了 `:verify-callback` 时) |
 | `:run-end` | `:stop-reason :turns :usage` | 运行结束 |
 
 ## 6. 消息与会话
@@ -161,6 +184,22 @@ clh-tools:+builtin-tools+     ; 工具列表
 (clh-agent:session-messages events)               ; 还原消息序列 → run :messages 续跑
 ```
 
+`:session-file` 启用时,`run` 内部经 **SESSION-LOGGER** 写入:除消息/用量/元信息外,
+主循环交付的**全部事件也会镜像落盘**(流式增量除外——完整 assistant 消息已单独记录),
+每条记录带时间戳 `ts` 与单调序号 `seq`;向既有文件续跑时序号接续,崩溃后可按
+序号审计已确认的事件前缀。事件镜像与消息记录共用顶层 `"kind"` 键
+(`"run-start"` `"tool-call"` `"tool-result"` `"compact"` `"stall"` `"verify"` `"run-end"` …)。
+meta 记录另携带 `config-digest` 的**配置摘要**(轮数/审批模式/工具清单/提示词散列
+与整体 `config_digest` 指纹),使事后审计可回答「当时跑的是什么配置」;
+同配置跨运行指纹一致,配置任一字段变化即反映到指纹。
+
+```lisp
+(clh-agent:make-session-logger path)              ; 显式构造;自动从既有记录数续起 seq
+(clh-agent:session-record target object)          ; target 为路径或 logger,返回写入记录
+(clh-agent:session-count-records path)            ; 既有记录行数(序号恢复用)
+(clh-agent:config-digest agent)                   ; 配置摘要 alist(含 config_digest 指纹)
+```
+
 ## 7. 错误处理
 
 ```lisp
@@ -171,7 +210,8 @@ clh-tools:+builtin-tools+     ; 工具列表
 ```
 
 工具失败不产生条件(转为失败工具结果);`max-turns`/预算耗尽也不产生条件,
-而是体现在 `result-stop-reason`。
+而是体现在 `result-stop-reason`;目标验证门(`:verify-callback`)回调返回 NIL
+或异常同样不产生条件——按失败处理(fail-closed)降级 `:unverified`。
 
 ## 8. MCP 客户端(Model Context Protocol)
 

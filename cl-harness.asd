@@ -23,7 +23,7 @@
   :description "CL-Harness 基础层:纯函数工具集、JSON 编解码、消息模型"
   :author "cl-harness contributors"
   :license "MIT"
-  :version "0.1.0"
+  :version "0.4.0"
   :depends-on ()
   :pathname "src/"
   :serial t

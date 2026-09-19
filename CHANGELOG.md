@@ -1,8 +1,57 @@
 # 更新日志
 
-## [Unreleased]
+## [0.4.0] - 2026-09-19
+
+### 新增
+- **目标验证门(`:verify-callback`)**:`run` 在自然结束前调用可编程回调
+  复验目标(文件确实改了、记录确实建了……);回调返回 NIL 或自身异常
+  一律按失败处理(fail-closed),停止原因降级为新档位 `:unverified`,
+  并发 `:verify` 事件(`:passed-p :reason`);消息序列保留以便排查与续跑。
+  回调为 NIL(默认)时该门完全关闭。由此把「模型宣称成功」与
+  「目标实际达成」强制分离;CLI 对验证结果给出终端提示。
+- **配置摘要与会话指纹**:`config-digest` 输出智能体配置的可读摘要
+  (轮数/审批模式/工具清单/提示词散列)与整体 `config_digest` 指纹
+  (FNV-1a 64,非加密,显式 2^64 截断保证跨实现一致,新增
+  `clh-util:fnv-1a-hex`,无新依赖);`:session-file` 的 meta 记录自动携带,
+  事后审计可回答「当时跑的是什么配置」。policy pack(版本化配置工件)
+  按其触发条件(多 profile / A/B 对比 / 自动调优)延后,见 README roadmap。
+- **LLM 失败分类:空回复纳入瞬时故障重试**:新增条件
+  `clh-llm:empty-response-error` 与判定 `empty-response-p`;「2xx 但无文本
+  也无工具调用」(reasoning 模型把生成预算耗于思考的常见形态)与 429/5xx、
+  传输层失败同样按指数退避重试。智能体层重试耗尽后以新停止原因 `:empty`
+  收场(消息保留,不再向上传播条件)。
+- **循环瘫痪护栏(连续相同工具调用检测)**:主循环逐轮计算工具调用签名
+  (`tool-calls-signature`,工具名+参数原文),同一签名连续出现
+  `:max-identical-turns`(默认 4,NIL 可关)轮即发 `:stall` 事件并以新
+  停止原因 `:stalled` 提前止损,不再烧完轮数预算;检测发生在工具执行后,
+  停止时消息序列保持 wire 一致(可续跑)。CLI 对 `:stall`/`:compact`
+  事件给出终端提示。
+- **上下文裁剪可观测(:compact 事件 + 省略统计)**:`trim-messages` 拆出
+  `trim-messages-with-stats`(返回省略条数与估算 token);裁剪提示消息改为
+  携带「已省略 N 条(约 T tokens)」统计;主循环在实际裁剪发生时发
+  `:compact` 事件(载荷 `:turn :elided-messages :elided-tokens :budget`)。
+  裁剪仍只影响发送副本,主线程消息与会话文件始终完整。
+- **会话文件升级为完整审计轨迹**:新增 `session-logger`(带单调序号 seq 的
+  会话写入器,`make-session-logger` 从既有记录数续起序号,续跑/崩溃恢复
+  不回绕)与 `session-record`(路径/logger 双形态落盘);`:session-file`
+  运行现在把主循环交付的**全部事件镜像落盘**(流式增量除外),与消息/
+  用量/元信息记录共用顶层 `kind` 键,每条记录带 `ts` 与 `seq`。旧路径
+  调用方式完全兼容。嵌套子智能体未启用持久化时不会把事件泄入外层会话。
+- **持续集成(GitHub Actions)**:`.github/workflows/ci.yml`,SBCL 与 CCL
+  矩阵全量测试(push/pull_request 触发);测试入口 `tests/run.sh` 支持
+  `CLH_LISP=sbcl|ccl` 选择实现;CI 无需任何 API Key(真机套件自动跳过)。
+- **docs/api.md 补 MCP API 参考**:双传输构造、握手、tools 调用与桥接、
+  条件体系与命令行接入。
+- **CLI 集成 MCP 服务器(`--mcp`)**:命令行与 REPL 零代码接入 MCP 服务器。
+  SPEC 支持 stdio(`NAME=CMD[+ARG…]`)与 Streamable HTTP
+  (`NAME=@URL[+TOKEN]`,Bearer 鉴权)两种形式,可多次传入接入多台;
+  启动时自动握手并桥接工具(与内置工具同等参与审批),单台失败跳过不
+  影响整体;REPL 新增 `/mcp` 命令(服务器状态)、`/tools` 合并显示全部
+  工具;退出时统一关闭全部 MCP 会话。
 
 ### 修复
+- **README「当前边界」移除已实现的 MCP 客户端条目**(roadmap 与正文矛盾);
+  事件表中不存在的 `:turn-end` 条目一并修正。
 - **CI 修复测试入口 `tests/run.sh`**:其一,裸 `(asdf:load-system ...)`
   依赖 quicklisp 并不提供的"缺失依赖自动从 dist 安装"行为,CI 上报
   fiveam not found;改用 `(ql:quickload :cl-harness/test)` 递归安装。
@@ -20,19 +69,6 @@
 - **`--tools` 选项真正生效**:该选项此前仅被解析、从未参与工具装配;
   现按逗号分隔的白名单对合并后的工具集(内置 + MCP)统一筛选,未知
   工具名在启动时报错(防拼写错误静默缺席)。
-
-### 新增
-- **持续集成(GitHub Actions)**:`.github/workflows/ci.yml`,SBCL 与 CCL
-  矩阵全量测试(push/pull_request 触发);测试入口 `tests/run.sh` 支持
-  `CLH_LISP=sbcl|ccl` 选择实现;CI 无需任何 API Key(真机套件自动跳过)。
-- **docs/api.md 补 MCP API 参考**:双传输构造、握手、tools 调用与桥接、
-  条件体系与命令行接入。
-- **CLI 集成 MCP 服务器(`--mcp`)**:命令行与 REPL 零代码接入 MCP 服务器。
-  SPEC 支持 stdio(`NAME=CMD[+ARG…]`)与 Streamable HTTP
-  (`NAME=@URL[+TOKEN]`,Bearer 鉴权)两种形式,可多次传入接入多台;
-  启动时自动握手并桥接工具(与内置工具同等参与审批),单台失败跳过不
-  影响整体;REPL 新增 `/mcp` 命令(服务器状态)、`/tools` 合并显示全部
-  工具;退出时统一关闭全部 MCP 会话。
 
 ## [0.3.0] - 2026-09-14
 

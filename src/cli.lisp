@@ -13,7 +13,7 @@
 
 (declaim (optimize (speed 1) (safety 3) (debug 3)))
 
-(defparameter +cli-version+ "0.3.0"
+(defparameter +cli-version+ "0.4.0"
   "CLI 版本号(与库版本同步)。")
 
 ;;; ANSI 颜色辅助(不做 TTY 探测,靠 --no-color 关闭)
@@ -30,6 +30,7 @@
 (defun cyan (text) (color "36" text))
 (defun green (text) (color "32" text))
 (defun red (text) (color "31" text))
+(defun yellow (text) (color "33" text))
 
 ;;; ---------------------------------------------------------------------------
 ;;; 参数解析(手工解析,避免额外依赖;错误即打印用法退出)
@@ -175,6 +176,20 @@ REPL 斜杠命令:
         (:permission-denied
          (format stream "~A~%"
                  (red (format nil "  ⨯ 权限拒绝:~A" (getf event :reason)))))
+        (:compact
+         (format stream "~A~%"
+                 (dim (format nil "  [上下文裁剪:省略 ~A 条较早消息(约 ~A tokens)]"
+                              (getf event :elided-messages)
+                              (getf event :elided-tokens)))))
+        (:stall
+         (format stream "~A~%"
+                 (yellow (format nil "  ⚠ 检测到循环停滞:相同工具调用已连续 ~A 轮,提前停止"
+                                 (getf event :streak)))))
+        (:verify
+         (format stream "~A~%"
+                 (if (getf event :passed-p)
+                     (dim "  ✓ 目标验证通过")
+                     (red (format nil "  ✗ 目标验证未通过:~A" (getf event :reason))))))
         (:run-end
          (let ((usage (getf event :usage))
                (turns (getf event :turns)))

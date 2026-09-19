@@ -35,6 +35,8 @@
    ;; 估算与 diff
    #:estimate-text-tokens
    #:simple-diff
+   ;; 非加密散列(配置摘要)
+   #:fnv-1a-hex
    ;; 杂项
    #:now-universal
    #:format-duration))
@@ -99,6 +101,9 @@ HTTP 传输通过动态变量 *http-post-fn* 注入,便于测试与替换。")
    #:api-error-status
    #:api-error-body
    #:api-key-missing
+   #:empty-response-error
+   ;; 空回复判定(失败分类的公开形态)
+   #:empty-response-p
    ;; Provider 配置
    #:llm-config
    #:llm-config-p
@@ -181,10 +186,12 @@ HTTP 传输通过动态变量 *http-post-fn* 注入,便于测试与替换。")
    #:agent-tools
    #:agent-system-prompt
    #:agent-max-turns
+   #:agent-max-identical-turns
    #:agent-permission-mode
    #:agent-allowed-tools
    #:agent-disallowed-tools
    #:agent-ask-callback
+   #:agent-verify-callback
    #:agent-on-event
    #:agent-trim-tokens
    #:agent-session-file
@@ -210,10 +217,22 @@ HTTP 传输通过动态变量 *http-post-fn* 注入,便于测试与替换。")
    #:estimate-message-tokens
    #:estimate-messages-tokens
    #:trim-messages
+   #:trim-messages-with-stats
+   ;; 工具调用签名(循环瘫痪检测)
+   #:tool-calls-signature
+   ;; 配置摘要(审计)
+   #:config-digest
    ;; 审批
    #:decide-permission
    ;; 会话
    #:session-append
+   #:session-record
+   #:session-logger
+   #:session-logger-p
+   #:make-session-logger
+   #:session-logger-path
+   #:session-logger-seq
+   #:session-count-records
    #:session-load
    #:session-messages))
 

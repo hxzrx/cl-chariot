@@ -42,14 +42,17 @@
   "判断消息作为序列开头时是否构成孤儿 tool 形态(有结果、无调用)。"
   (string= (clh-msg:message-role message) "tool"))
 
-(defun trim-messages (messages budget)
-  "把 MESSAGES 裁剪到 BUDGET(估算 token)以内;不超预算时原样返回(同一列表)。
+(defun trim-messages-with-stats (messages budget)
+  "把 MESSAGES 裁剪到 BUDGET(估算 token)以内,返回
+(VALUES 裁剪结果 省略条数 省略估算token数)。
+不超预算时原样返回 (VALUES MESSAGES 0 0)。
 裁剪结果满足:全部 system 消息保留;开头无孤儿 tool 消息;
-被裁剪时以一条 user 提示消息开头告知模型历史被省略。"
+被裁剪时以一条带省略统计的 user 提示消息开头告知模型历史不完整。"
   (if (<= (estimate-messages-tokens messages) budget)
-      messages
+      (values messages 0 0)
       (multiple-value-bind (system rest) (split-system messages)
         (let* ((system-tokens (estimate-messages-tokens system))
+               (rest-tokens (estimate-messages-tokens rest))
                (remaining (- budget system-tokens))
                (kept '())                   ; 从新到旧收集
                (used 0))
@@ -62,10 +65,20 @@
           ;; assistant 工具调用成对出现,而后者已随裁剪丢失
           (loop while (and kept (orphan-tool-p (first kept)))
                 do (pop kept))
-          (let ((elided (> (length rest) (length kept))))
-            (append
-             system
-             (when (and elided kept)
-               (list (clh-msg:make-user-message
-                      "[系统提示:为控制上下文长度,较早的对话历史已被省略,以上是保留的最近部分。]")))
-             kept))))))
+          (let* ((elided (- (length rest) (length kept)))
+                 (elided-tokens (- rest-tokens used)))
+            (values
+             (append
+              system
+              (when (and (plusp elided) kept)
+                (list (clh-msg:make-user-message
+                       (format nil "[系统提示:为控制上下文长度,已省略较早的 ~D 条消息(约 ~:D tokens)。以下是保留的最近部分。]"
+                               elided elided-tokens))))
+              kept)
+             elided
+             elided-tokens))))))
+
+(defun trim-messages (messages budget)
+  "把 MESSAGES 裁剪到 BUDGET(估算 token)以内;不超预算时原样返回(同一列表)。
+TRIM-MESSAGES-WITH-STATS 的兼容包装,仅返回裁剪结果。"
+  (trim-messages-with-stats messages budget))

@@ -264,3 +264,63 @@
         (chat (make-provider :deepseek :api-key "k" :retries 1 :retry-delay 0)
               (list (make-user-message "hi")) :stream nil)
       (api-error (e) (is (= 500 (api-error-status e)))))))
+
+;;; ---------- 失败分类:空回复重试 ----------
+
+(test empty-response-p-classification
+  (is (empty-response-p (make-assistant-message :content nil)))
+  (is (empty-response-p (make-assistant-message :content "   ")))
+  (is (not (empty-response-p (make-assistant-message :content "有内容"))))
+  (is (not (empty-response-p
+            (make-assistant-message :content nil
+                                    :tool-calls (list (make-tool-call "c1" "f" "{}")))))))
+
+(test retry-on-empty-response-streaming
+  ;; 前两次 2xx 但空回复,第三次正常:空回复与 429/5xx 同属瞬时故障参与退避重试
+  (let ((attempts 0))
+    (let ((clh-llm::*http-post-fn*
+            (lambda (url headers body &key want-stream timeout)
+              (declare (ignore url headers body want-stream timeout))
+              (incf attempts)
+              (if (< attempts 3)
+                  (values 200
+                          (make-string-input-stream
+                           (format nil "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}~%data: [DONE]~%")))
+                  (values 200
+                          (make-string-input-stream
+                           (format nil "data: {\"choices\":[{\"delta\":{\"content\":\"恢复了\"}}]}~%data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":1,\"total_tokens\":2}}~%data: [DONE]~%")))))))
+      (multiple-value-bind (msg usage)
+          (chat (make-provider :deepseek :api-key "k" :retries 3 :retry-delay 0)
+                (list (make-user-message "hi")) :stream t)
+        (is (= 3 attempts))
+        (is (string= "恢复了" (message-content msg)))
+        (is (= 2 (usage-total-tokens usage)))))))
+
+(test retry-on-empty-response-blocking
+  ;; 非流式路径同样把空回复当瞬时故障
+  (let ((attempts 0))
+    (let ((clh-llm::*http-post-fn*
+            (lambda (url headers body &key want-stream timeout)
+              (declare (ignore url headers body want-stream timeout))
+              (incf attempts)
+              (if (< attempts 2)
+                  (values 200 (make-string-input-stream
+                               "{\"choices\":[{\"message\":{\"role\":\"assistant\"},\"finish_reason\":\"stop\"}]}"))
+                  (values 200 (make-string-input-stream
+                               "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"第二次成功\"},\"finish_reason\":\"stop\"}]}"))))))
+      (multiple-value-bind (msg)
+          (chat (make-provider :deepseek :api-key "k" :retries 3 :retry-delay 0)
+                (list (make-user-message "hi")) :stream nil)
+        (is (= 2 attempts))
+        (is (string= "第二次成功" (message-content msg)))))))
+
+(test empty-response-exhausted-signals
+  ;; 重试耗尽仍为空回复:EMPTY-RESPONSE-ERROR 从 chat 层逃逸
+  (let ((clh-llm::*http-post-fn*
+          (lambda (url headers body &key want-stream timeout)
+            (declare (ignore url headers body want-stream timeout))
+            (values 200 (make-string-input-stream
+                         "{\"choices\":[{\"message\":{\"role\":\"assistant\"},\"finish_reason\":\"stop\"}]}")))))
+    (signals empty-response-error
+      (chat (make-provider :deepseek :api-key "k" :retries 1 :retry-delay 0)
+            (list (make-user-message "hi")) :stream nil))))

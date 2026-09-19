@@ -35,8 +35,28 @@
   ((%provider-name :initarg :provider-name :reader api-key-missing-provider))
   (:documentation "未配置 API Key(既未显式传入,环境变量也无值)时信号。")
   (:report (lambda (c stream)
-             (format stream "未配置 API Key:provider ~A。请通过 :API-Key 传入或设置对应环境变量。"
+             (format stream "未配置 API Key:provider ~A。请通过 :API-KEY 传入或设置对应环境变量。"
                      (api-key-missing-provider c)))))
+
+(define-condition empty-response-error (llm-error)
+  ()
+  (:documentation
+   "模型返回了「空回复」:HTTP 2xx,但既无文本内容也无工具调用。
+reasoning 类模型可能把生成预算耗在思考上而不产出可见内容,该形态与
+429/5xx 一样属于瞬时故障,参与指数退避重试(重试耗尽后向上传播)。"))
+
+(defun empty-response-p (assistant)
+  "判断 assistant 消息是否为「空回复」:无工具调用,且文本缺失或仅空白。"
+  (let ((content (clh-msg:message-content assistant)))
+    (and (null (clh-msg:message-tool-calls assistant))
+         (or (null content)
+             (clh-util:string-blank-p content)))))
+
+(defun check-non-empty-response (assistant)
+  "空回复形态检查:为空时信号 EMPTY-RESPONSE-ERROR(交给重试循环)。"
+  (when (empty-response-p assistant)
+    (error 'empty-response-error
+           :message "模型返回空回复(无文本内容也无工具调用);生成预算可能已耗于思考。")))
 
 (define-condition api-error (llm-error)
   ((%status :initarg :status :reader api-error-status)
@@ -473,7 +493,9 @@ ON-DELTA    流式回调 (LAMBDA (KIND TEXT)),KIND ∈ :TEXT/:REASONING;
 TEMPERATURE/MAX-TOKENS  覆盖 Provider 默认。
 
 返回 (VALUES assistant消息 usage finish-reason)。
-网络/HTTP 层可重试错误按 RETRIES 指数退避重试;不可重试错误信号 API-ERROR。"
+可重试错误按 RETRIES 指数退避重试:HTTP 408/429/5xx 与传输层失败,
+以及「空回复」(2xx 但无文本无工具调用,reasoning 模型常见);
+不可重试错误(其余 4xx、Key 缺失)直接信号 API-ERROR / API-KEY-MISSING。"
   (unless (and (llm-config-api-key provider) (plusp (length (llm-config-api-key provider))))
     (error 'api-key-missing :provider-name (llm-config-name provider)))
   (let ((body (encode-json
@@ -491,7 +513,9 @@ TEMPERATURE/MAX-TOKENS  覆盖 Provider 默认。
              (retry-loop (stream-p)
                (loop
                  (handler-case (return (one-attempt stream-p))
-                   ((or api-error transport-error) (e)
+                   ;; 失败分类决定可重试性:429/5xx 看状态码;传输层失败与
+                   ;; 空回复无状态码(NULL),同属瞬时故障参与退避重试
+                   ((or api-error transport-error empty-response-error) (e)
                      (let ((status (when (typep e 'api-error) (api-error-status e))))
                        (if (and (< attempt (1- max-attempts))
                                 (or (null status) (retryable-status-p status)))
@@ -538,9 +562,12 @@ TEMPERATURE/MAX-TOKENS  覆盖 Provider 默认。
                        (let ((delta (jref choice "delta" '(:obj))))
                          (deliver-delta on-delta delta)
                          (setf acc (acc-apply-delta acc delta)))
-                       (let ((fr (jref choice "finish_reason")))
-                         (when (and fr (not (eq fr :null))) (setf finish fr)))))))
-               (values (accumulator->message acc) usage finish))))
+                   (let ((fr (jref choice "finish_reason")))
+                     (when (and fr (not (eq fr :null))) (setf finish fr)))))))
+               ;; 空回复(无文本无工具调用)按瞬时故障处理,交由重试循环
+               (let ((assistant (accumulator->message acc)))
+                 (check-non-empty-response assistant)
+                 (values assistant usage finish)))))
            ;; 语义错误(条件体系内)原样上抛交给重试循环;其余(SSL 截断、
            ;; 连接重置等)转为可重试的 transport-error
            (llm-error (e) (error e))
@@ -569,7 +596,11 @@ TEMPERATURE/MAX-TOKENS  覆盖 Provider 默认。
              (error 'api-error :status status :body (read-all-input stream)))
            (let* ((text (read-all-input stream))
                   (response (parse-json text)))
-             (response->triple response)))
+             ;; 空回复(无文本无工具调用)按瞬时故障处理,交由重试循环
+             (multiple-value-bind (assistant usage finish)
+                 (response->triple response)
+               (check-non-empty-response assistant)
+               (values assistant usage finish))))
            (llm-error (e) (error e))
            (error (e)
              (error 'transport-error

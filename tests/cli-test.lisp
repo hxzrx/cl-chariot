@@ -44,7 +44,7 @@
   ;; 伞形包统一入口可用
   (is (member :deepseek (clh:provider-preset-names)))
   (is (string= "bash" (first (clh:builtin-tool-names))))
-  (is (string= "0.3.0" clh:+version+)))
+  (is (string= "0.4.0" clh:+version+)))
 
 ;;; ---------- MCP 接入(--mcp) ----------
 
