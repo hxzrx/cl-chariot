@@ -44,6 +44,15 @@
 实测 4 次足够宽容合法的重复,又能及时止损;置 NIL(:MAX-IDENTICAL-TURNS)
 可关闭该检测。")
 
+(defparameter +compaction-instruction+
+  "以下是一段较早的对话历史。请把它折叠为一份简明摘要,供智能体在不丢失关键上下文的情况下继续工作。摘要必须保留:
+1. 用户的任务目标与约束;
+2. 已完成的关键步骤及其结果(含重要文件路径、命令与产出);
+3. 发现的错误与当前处理状态;
+4. 未完成的事项与建议的下一步。
+直接输出摘要正文,不要评论。"
+  "默认摘要器的指令前缀(:COMPACT-FN 经 DEFAULT-COMPACTION-FN 使用)。")
+
 (defparameter *session-logger* nil
   "当前运行绑定的会话写入器(动态变量)。RUN 为 :SESSION-FILE 运行时创建并绑定;
 子智能体等嵌套运行会重新绑定——未启用持久化的嵌套运行绑定 NIL,
@@ -69,6 +78,10 @@ VERIFY-CALLBACK   目标验证门 (LAMBDA (RUN-RESULT)) → 非 NIL 表示目标
                   (fail-closed),停止原因降级 :UNVERIFIED。NIL(默认)关闭该门;
 ON-EVENT          事件回调 (LAMBDA (EVENT-PLIST));可嵌套包装;
 TRIM-TOKENS       上下文 token 预算;NIL 表示不裁剪;
+COMPACT-FN        摘要压缩器 (LAMBDA (被省略消息列表)) → (VALUES 摘要文本
+                  用量对象)。上下文超预算时先尝试把被丢弃历史折叠为摘要,
+                  折叠失败(返回空或异常)降级为纯裁剪;摘要调用计入用量。
+                  NIL(默认)= 纯裁剪。内置实现见 DEFAULT-COMPACTION-FN;
 SESSION-FILE      会话 JSONL 文件路径;NIL 表示不持久化;
 CHAT-FN           模型调用注入点(见 CALL-CHAT);
 TEMPERATURE/MAX-TOKENS  覆盖 Provider 默认采样参数;
@@ -85,6 +98,7 @@ MAX-TOTAL-TOKENS        单次运行累计 token 预算,超限即停(:BUDGET);NI
   (verify-callback nil)
   (on-event nil)
   (trim-tokens nil)
+  (compaction-fn nil)
   (session-file nil)
   (chat-fn nil)
   (temperature nil)
@@ -95,15 +109,16 @@ MAX-TOTAL-TOKENS        单次运行累计 token 预算,超限即停(:BUDGET);NI
                                     max-identical-turns
                                     permission-mode allowed-tools disallowed-tools
                                     ask-callback verify-callback on-event
-                                    trim-tokens
+                                    trim-tokens compaction-fn
                                     session-file chat-fn temperature max-tokens
                                     max-total-tokens)
   "构造智能体配置。所有参数见 AGENT 结构文档。
 最小用法:(make-agent :provider (clh-llm:make-provider :deepseek))。"
   (declare (ignore provider tools system-prompt max-turns max-identical-turns
                    permission-mode allowed-tools disallowed-tools ask-callback
-                   verify-callback on-event trim-tokens session-file chat-fn
-                   temperature max-tokens max-total-tokens))
+                   verify-callback on-event trim-tokens compaction-fn
+                   session-file chat-fn temperature max-tokens
+                   max-total-tokens))
   (apply #'%make-agent keys))
 
 (defun emit-event (agent event)
@@ -158,6 +173,18 @@ MAX-TOTAL-TOKENS        单次运行累计 token 预算,超限即停(:BUDGET);NI
                                      (cons "budget" (getf event :budget)))
                                (when (getf event :hint)
                                  (list (cons "hint" (getf event :hint))))))
+                      (:summarize
+                       (append (list (cons "turn" (getf event :turn))
+                                     (cons "elided_messages" (getf event :elided-messages))
+                                     (cons "elided_tokens" (getf event :elided-tokens))
+                                     (cons "failed_p" (bool (getf event :failed-p))))
+                               (if (getf event :failed-p)
+                                   (list (cons "reason" (getf event :reason)))
+                                   (append (when (getf event :summary-message)
+                                             (list (cons "summary_message"
+                                                         (getf event :summary-message))))
+                                           (when (getf event :usage)
+                                             (list (cons "usage" (getf event :usage))))))))
                       (:stall
                        (list (cons "turn" (getf event :turn))
                              (cons "streak" (getf event :streak))
@@ -273,11 +300,50 @@ TURNS         实际执行的 LLM 调用轮数。"
                  (cons "trim_tokens" (or (agent-trim-tokens agent) :null))
                  (cons "max_total_tokens" (or (agent-max-total-tokens agent) :null))
                  (cons "verify_gate" (if (agent-verify-callback agent) :true :false))
+                 (cons "compaction_fn" (if (agent-compaction-fn agent) :true :false))
                  (cons "tools" (or tool-names '()))
                  (cons "system_prompt_digest" (fnv-1a-hex prompt)))))
     (append cells
             (list (cons "config_digest"
                         (fnv-1a-hex (encode-json (cons :obj cells))))))))
+
+(defun default-compaction-fn (agent)
+  "默认摘要压缩器:单次无工具的模型调用(经智能体注入的 :CHAT-FN,
+非流式;测试可脚本化)。返回 (VALUES 摘要文本 用量对象)。
+失败向上传播,由主循环降级为纯裁剪。"
+  (lambda (elided-messages)
+    (let* ((transcript
+             (clh-util:join-string
+              (loop for m in elided-messages
+                    collect (format nil "[~A] ~A"
+                                    (clh-msg:message-role m)
+                                    (if (clh-msg:message-tool-calls m)
+                                        "(工具调用)"
+                                        (clh-util:clamp-string
+                                         (or (clh-msg:message-content m) "")
+                                         2000 ""))))
+              (string #\newline)))
+           (prompt (format nil "~A~%~%~A" +compaction-instruction+ transcript))
+           (fn (or (agent-chat-fn agent) #'default-chat-fn)))
+      (multiple-value-bind (message usage)
+          (funcall fn (agent-provider agent)
+                   (list (clh-msg:make-user-message prompt))
+                   :tools nil :stream nil :on-delta nil
+                   :temperature (agent-temperature agent)
+                   :max-tokens (agent-max-tokens agent))
+        (values (clh-msg:message-content message) usage)))))
+
+(defun %attempt-summary (agent elided-messages)
+  "调用智能体的摘要压缩器,返回 (VALUES 摘要文本 用量 失败原因);
+失败原因非 NIL 表示本次折叠失败(空文本或异常),主循环随之降级纯裁剪。"
+  (handler-case
+      (multiple-value-bind (text usage)
+          (funcall (agent-compaction-fn agent) elided-messages)
+        (if (and (stringp text) (plusp (length text)))
+            (values text usage nil)
+            (values nil nil "摘要器返回空文本")))
+    (error (e)
+      (values nil nil (format nil "~A" e)))))
 
 (defun execute-tool-call (agent tool-call)
   "执行单个工具调用(审批 → 执行 → 计时 → 事件),返回 tool 消息。
@@ -369,7 +435,9 @@ MAX-TURNS 覆盖配置中的轮数上限。
   :RUN-START(:PROMPT) → {:TURN-START(:TURN) → :TEXT-DELTA/:REASONING-DELTA(:TEXT)
   → :ASSISTANT-MESSAGE(:MESSAGE) → :TOOL-CALL(:TOOL-NAME :ARGUMENTS :CALL-ID)
   → [:PERMISSION-DENIED] → :TOOL-RESULT(:RESULT :ERROR-P :DURATION)
-  → [:COMPACT(:ELIDED-MESSAGES :ELIDED-TOKENS :BUDGET)]
+  → [:COMPACT(:ELIDED-MESSAGES :ELIDED-TOKENS :BUDGET :HINT) |
+     :SUMMARIZE(:ELIDED-MESSAGES :ELIDED-TOKENS [:SUMMARY-MESSAGE :USAGE] |
+                :FAILED-P :REASON)]
   → [:STALL(:TURN :STREAK :SIGNATURE)]}
   → [:VERIFY(:PASSED-P :REASON)] → :RUN-END(:STOP-REASON :TURNS :USAGE)"
   (let ((*session-logger* (when (agent-session-file agent)
@@ -411,20 +479,55 @@ MAX-TURNS 覆盖配置中的轮数上限。
                                              :turns (1- turn) :usage usage))
                      (return result)))
                  (emit-event agent (list :kind :turn-start :turn turn))
-                 ;; 上下文裁剪(只影响发送副本,主线程消息与会话文件始终完整);
-                 ;; 实际裁剪发生时发 :COMPACT 事件留痕(提示消息随事件入日志,
-                 ;; 否则它「模型可见而未记录」,审计链在裁剪处断裂)
-                 (multiple-value-bind (request-messages elided elided-tokens hint)
+                 ;; 上下文裁剪/摘要压缩(只影响发送副本,主线程消息与会话文件
+                 ;; 始终完整);合成消息(提示/摘要)随事件镜像入日志——
+                 ;; 否则「模型可见而未记录」,审计链在压缩处断裂
+                 (multiple-value-bind (request-messages elided elided-tokens hint elided-msgs)
                      (if (agent-trim-tokens agent)
                          (trim-messages-with-stats msgs (agent-trim-tokens agent))
-                         (values msgs 0 0 nil))
-                   (when (plusp elided)
-                     (emit-event agent
-                                 (list :kind :compact :turn turn
-                                       :elided-messages elided
-                                       :elided-tokens elided-tokens
-                                       :budget (agent-trim-tokens agent)
-                                       :hint hint)))
+                         (values msgs 0 0 nil nil))
+                   (cond
+                     ;; 摘要压缩:超预算且配置了压缩器——先尝试折叠,
+                     ;; 失败(空文本/异常)降级为纯裁剪并留痕
+                     ((and (plusp elided) (agent-compaction-fn agent))
+                      (multiple-value-bind (summary-text summary-usage failure)
+                          (%attempt-summary agent elided-msgs)
+                        (if failure
+                            (progn
+                              (emit-event agent
+                                          (list :kind :summarize :turn turn
+                                                :elided-messages elided
+                                                :elided-tokens elided-tokens
+                                                :failed-p t :reason failure))
+                              (emit-event agent
+                                          (list :kind :compact :turn turn
+                                                :elided-messages elided
+                                                :elided-tokens elided-tokens
+                                                :budget (agent-trim-tokens agent)
+                                                :hint hint)))
+                            (let ((summary-message
+                                    (build-summary-message
+                                     summary-text elided elided-tokens)))
+                              (setf request-messages
+                                    (splice-summary request-messages hint
+                                                    summary-message))
+                              (when summary-usage
+                                (setf usage
+                                      (clh-llm:add-usage usage summary-usage)))
+                              (emit-event agent
+                                          (list :kind :summarize :turn turn
+                                                :elided-messages elided
+                                                :elided-tokens elided-tokens
+                                                :summary-message summary-message
+                                                :usage summary-usage))))))
+                     ;; 纯裁剪(未配置压缩器)
+                     ((plusp elided)
+                      (emit-event agent
+                                  (list :kind :compact :turn turn
+                                        :elided-messages elided
+                                        :elided-tokens elided-tokens
+                                        :budget (agent-trim-tokens agent)
+                                        :hint hint))))
                    (multiple-value-bind (assistant-message turn-usage finish)
                        (handler-case (call-chat agent request-messages)
                          ;; 空回复重试耗尽:以 :EMPTY 收场(消息保留),

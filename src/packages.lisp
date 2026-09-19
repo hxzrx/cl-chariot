@@ -227,6 +227,12 @@ HTTP 传输通过动态变量 *http-post-fn* 注入,便于测试与替换。")
    #:estimate-messages-tokens
    #:trim-messages
    #:trim-messages-with-stats
+   ;; 摘要压缩
+   #:agent-compaction-fn
+   #:default-compaction-fn
+   #:+compaction-instruction+
+   #:build-summary-message
+   #:splice-summary
    ;; 工具调用签名(循环瘫痪检测)
    #:tool-calls-signature
    ;; 配置摘要(审计)
@@ -259,6 +265,7 @@ HTTP 传输通过动态变量 *http-post-fn* 注入,便于测试与替换。")
    #:session-search
    #:session-fork
    #:session-compact-hints
+   #:session-summary-messages
    #:session-recording-break))
 
 (defpackage :clh-mcp

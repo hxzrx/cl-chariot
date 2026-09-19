@@ -325,3 +325,26 @@
         (is (string= "ghost" (message-content (getf violation :message))))))
     ;; 发送副本是日志的子集(续跑/裁剪场景的常态):成立
     (is (null (session-recording-break (list (list a1 u2)) logged)))))
+
+(test session-record->event-summarize
+  ;; :summarize 镜像还原(成功形态带摘要消息与用量)
+  (let ((record '(:obj ("seq" . 9) ("kind" . "summarize")
+                       ("turn" . 2) ("elided_messages" . 4)
+                       ("elided_tokens" . 900) ("failed_p" . :false)
+                       ("summary_message" . (:obj ("role" . "user")
+                                                  ("content" . "摘要正文"))))))
+    (let ((event (session-record->event record)))
+      (is (eq :summarize (getf event :kind)))
+      (is (= 2 (getf event :turn)))
+      (is (= 4 (getf event :elided-messages)))
+      (is (null (getf event :failed-p)))
+      (is (search "摘要正文"
+                  (message-content (getf event :summary-message))))))
+  ;; 失败形态
+  (let ((event (session-record->event
+                '(:obj ("kind" . "summarize") ("turn" . 1)
+                       ("elided_messages" . 2) ("elided_tokens" . 80)
+                       ("failed_p" . :true) ("reason" . "摘要器返回空文本")))))
+    (is (eq t (getf event :failed-p)))
+    (is (string= "摘要器返回空文本" (getf event :reason)))
+    (is (null (getf event :summary-message)))))

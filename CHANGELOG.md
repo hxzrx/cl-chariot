@@ -1,5 +1,24 @@
 # 更新日志
 
+## [Unreleased]
+
+### 新增
+- **摘要压缩(`:compaction-fn`)**:上下文超预算时不再只有有损裁剪——
+  被丢弃的历史先交给可编程压缩器折叠为一段摘要,以带统计前缀的合成
+  user 消息进入发送副本,长任务不再"忘掉自己做过什么"。
+  - 折叠调用为单次无工具请求(经 `:chat-fn` 注入,非流式,测试可脚本化),
+    用量并入运行用量;折叠失败(空文本/异常)自动降级为纯裁剪并留痕;
+  - 新事件 `:summarize`(成功:`:summary-message :usage`;失败:
+    `:failed-p :reason`),摘要消息随事件镜像入日志,
+    「模型可见即已记录」不变量将其计入「已记录」集合
+    (新增 `session-summary-messages`);
+  - 纯函数投影 `build-summary-message` / `splice-summary`;
+    `trim-messages-with-stats` 增加第 5 返回值(按时间序交出被省略
+    消息列表,向后兼容);
+  - 默认实现 `default-compaction-fn`(指令前缀
+    `+compaction-instruction+` 可调);`config-digest` 新增
+    `compaction_fn` 字段。
+
 ## [0.6.0] - 2026-09-19
 
 ### 新增

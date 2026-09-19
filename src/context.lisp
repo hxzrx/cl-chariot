@@ -44,14 +44,15 @@
 
 (defun trim-messages-with-stats (messages budget)
   "把 MESSAGES 裁剪到 BUDGET(估算 token)以内,返回
-(VALUES 裁剪结果 省略条数 省略估算token数 提示消息)。
-不超预算时原样返回 (VALUES MESSAGES 0 0 NIL)。
+(VALUES 裁剪结果 省略条数 省略估算token数 提示消息 被省略消息列表)。
+不超预算时原样返回 (VALUES MESSAGES 0 0 NIL NIL)。
 裁剪结果满足:全部 system 消息保留;开头无孤儿 tool 消息;
 被裁剪时以一条带省略统计的 user 提示消息开头告知模型历史不完整。
 提示消息只进入发送副本(主线程消息序列保持完整),第 4 个返回值把它
-交出供 :COMPACT 事件留痕——「模型可见即已记录」要求它进会话日志。"
+交出供 :COMPACT 事件留痕——「模型可见即已记录」要求它进会话日志;
+第 5 个返回值按时间序交出被省略的消息,供摘要压缩(:COMPACT-FN)折叠。"
   (if (<= (estimate-messages-tokens messages) budget)
-      (values messages 0 0 nil)
+      (values messages 0 0 nil nil)
       (multiple-value-bind (system rest) (split-system messages)
         (let* ((system-tokens (estimate-messages-tokens system))
                (rest-tokens (estimate-messages-tokens rest))
@@ -69,6 +70,7 @@
                 do (pop kept))
           (let* ((elided (- (length rest) (length kept)))
                  (elided-tokens (- rest-tokens used))
+                 (elided-messages (subseq rest 0 elided))
                  (hint (when (and (plusp elided) kept)
                          (clh-msg:make-user-message
                           (format nil "[系统提示:为控制上下文长度,已省略较早的 ~D 条消息(约 ~:D tokens)。以下是保留的最近部分。]"
@@ -79,7 +81,30 @@
                      kept)
              elided
              elided-tokens
-             hint))))))
+             hint
+             elided-messages))))))
+
+;;; ---------------------------------------------------------------------------
+;;; 摘要压缩(超预算历史的可编程折叠)
+;;; ---------------------------------------------------------------------------
+
+(defun build-summary-message (summary-text elided elided-tokens)
+  "把摘要文本包进一条带统计前缀的 user 消息。这是合成消息——只进入
+发送副本,不占消息记录;「模型可见即已记录」由 :SUMMARIZE 事件镜像
+携带它来满足(见 SESSION-SUMMARY-MESSAGES)。"
+  (clh-msg:make-user-message
+   (format nil "[系统提示:为控制上下文长度,较早的 ~D 条消息(约 ~:D tokens)已被折叠为以下摘要。]~%~%~A"
+           elided elided-tokens summary-text)))
+
+(defun splice-summary (trim-result hint summary-message)
+  "把 TRIM-RESULT(= system 前缀 + [裁剪提示] + 保留尾部)中的裁剪提示
+替换为 SUMMARY-MESSAGE;无提示时插入在 system 前缀之后。
+返回新的请求消息序列(纯函数,不修改入参)。"
+  (multiple-value-bind (system tail) (split-system trim-result)
+    (let ((kept (if (and hint (eq (first tail) hint))
+                    (rest tail)
+                    tail)))
+      (append system (list summary-message) kept))))
 
 (defun trim-messages (messages budget)
   "把 MESSAGES 裁剪到 BUDGET(估算 token)以内;不超预算时原样返回(同一列表)。

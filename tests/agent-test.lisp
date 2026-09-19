@@ -27,14 +27,14 @@ LOG 为可选 cons 单元(收集每次调用收到的消息序列),供断言使�
 (defun make-loop-agent (chat-fn &rest extra
                         &key tools permission-mode on-event max-turns system-prompt
                           allowed-tools disallowed-tools ask-callback
-                          trim-tokens session-file max-total-tokens
+                          trim-tokens compaction-fn session-file max-total-tokens
                           max-identical-turns verify-callback)
   "构造用于循环测试的智能体(provider 为占位配置,不会被调用)。
 未显式给出的参数使用与生产一致的默认(全部内置工具、yolo 模式等)。"
   (declare (ignore permission-mode on-event max-turns system-prompt
                    allowed-tools disallowed-tools ask-callback trim-tokens
-                   session-file max-total-tokens max-identical-turns
-                   verify-callback))
+                   compaction-fn session-file max-total-tokens
+                   max-identical-turns verify-callback))
   (let* ((given-keys (loop for rest-plist on extra by #'cddr
                            collect (first rest-plist)))
          (defaults (append
@@ -747,3 +747,132 @@ LOG 为可选 cons 单元(收集每次调用收到的消息序列),供断言使�
           (is (member :run-end kinds))
           ;; 审批拒绝时不执行工具,故无 :tool-result
           (is (not (member :tool-result kinds))))))))
+
+;;; ---------- 摘要压缩(:compaction-fn) ----------
+
+(test build-summary-and-splice
+  ;; 纯投影:裁剪提示被摘要消息替换;无提示时插在 system 之后
+  (let* ((sys (make-system-message "sys"))
+         (kept (make-user-message "recent"))
+         (hint (make-user-message "[系统提示:已省略…]"))
+         (smsg (build-summary-message "摘要内容" 3 400))
+         (request (splice-summary (list sys hint kept) hint smsg)))
+    (is (equal '("system" "user" "user") (mapcar #'message-role request)))
+    (is (string= "sys" (message-content (first request))))
+    (is (search "摘要内容" (message-content (second request))))
+    (is (search "折叠为以下摘要" (message-content (second request))))
+    (is (string= "recent" (message-content (third request))))
+    ;; 无提示形态:摘要插在 system 前缀之后
+    (let ((request2 (splice-summary (list sys kept) nil smsg)))
+      (is (equal '("system" "user" "user") (mapcar #'message-role request2)))
+      (is (string= "recent" (message-content (third request2)))))))
+
+(test trim-returns-elided-messages
+  ;; 第 5 返回值按时间序交出被省略的消息,供摘要折叠
+  (let* ((big-text (make-string 4000 :initial-element #\a))
+         (big (make-user-message big-text))
+         (msgs (list (make-system-message "sys") big
+                     (make-user-message "recent")
+                     (make-assistant-message :content "done"))))
+    (multiple-value-bind (result elided elided-tokens hint elided-msgs)
+        (trim-messages-with-stats msgs 600)
+      (is (= 1 elided))
+      (is (plusp elided-tokens))
+      (is (not (null hint)))
+      (is (= 1 (length elided-msgs)))
+      (is (eq big (first elided-msgs)))
+      (is (string= big-text (message-content (first elided-msgs))))
+      ;; 被省略的不在结果里,最近的保留
+      (is (string= "done" (last-assistant-text result))))))
+
+(test default-compaction-fn-renders-and-returns
+  ;; 默认摘要器:单次无工具调用,指令 + 逐行转写(工具调用标注)
+  (let* ((log (list nil))
+         (agent (make-loop-agent
+                 (make-scripted-chat-fn
+                  (list (lambda () (make-assistant-message
+                                    :content "任务已完成一半,文件已写入。")))
+                  log)))
+         (fn (default-compaction-fn agent))
+         (elided (list (make-user-message "帮我做 X")
+                       (make-assistant-message
+                        :tool-calls (list (make-tool-call "c" "bash" "{}"))))))
+    (multiple-value-bind (text usage)
+        (funcall fn elided)
+      (is (string= "任务已完成一半,文件已写入。" text))
+      (is (plusp (usage-total-tokens usage))))
+    (let ((sent (car log)))
+      (is (= 1 (length sent)))
+      (is (string= "user" (message-role (first sent))))
+      (is (search "折叠为一份简明摘要" (message-content (first sent))))
+      (is (search "[user] 帮我做 X" (message-content (first sent))))
+      (is (search "[assistant] (工具调用)" (message-content (first sent)))))))
+
+(test compaction-summarizes-when-over-budget
+  ;; 端到端:超预算触发折叠,摘要入发送副本、入用量、入日志(不变量成立)
+  (uiop:with-temporary-file (:pathname session :type "jsonl")
+    (let* ((turn-log (list nil))
+           (events '())
+           (agent (make-loop-agent
+                   (capture-turns-chat-fn (make-scripted-chat-fn (make-two-turn-script))
+                                          turn-log)
+                   :session-file (namestring session)
+                   :trim-tokens 500
+                   :compaction-fn (lambda (elided)
+                                    (declare (ignore elided))
+                                    (values "此前已创建测试文件" (fake-usage 100 50)))
+                   :on-event (lambda (e) (push e events))))
+           (result (run agent (make-string 4000 :initial-element #\a))))
+      (setf (car turn-log) (nreverse (car turn-log))
+            events (nreverse events))
+      (is (eq :end (result-stop-reason result)))
+      (let ((sums (remove-if-not (lambda (e) (eq (getf e :kind) :summarize)) events))
+            (compacts (remove-if-not (lambda (e) (eq (getf e :kind) :compact)) events)))
+        ;; 每个超预算轮都折叠成功,无降级
+        (is (plusp (length sums)))
+        (is (= 0 (length compacts)))
+        (is (not (getf (first sums) :failed-p))))
+      ;; 摘要消息进入发送副本
+      (is (some (lambda (m)
+                  (and (stringp (message-content m))
+                       (search "此前已创建测试文件" (message-content m))))
+                (apply #'append (car turn-log))))
+      ;; 摘要调用计入用量
+      (is (>= (usage-total-tokens (result-usage result)) 150))
+      ;; 审计:摘要消息随镜像入日志,不变量成立,回放可还原
+      (multiple-value-bind (records corrupt) (session-load (namestring session))
+        (is (= 0 corrupt))
+        (is (plusp (length (session-summary-messages records))))
+        (is (null (session-recording-break (car turn-log) records)))
+        (is (member :summarize
+                    (mapcar (lambda (e) (getf e :kind))
+                            (mapcar #'session-record->event (session-events records)))))))))
+
+(test compaction-falls-back-to-trim-on-failure
+  ;; 折叠失败:留失败痕迹,降级纯裁剪,提示照常留痕,运行不受阻
+  (uiop:with-temporary-file (:pathname session :type "jsonl")
+    (let* ((turn-log (list nil))
+           (events '())
+           (agent (make-loop-agent
+                   (capture-turns-chat-fn (make-scripted-chat-fn (make-two-turn-script))
+                                          turn-log)
+                   :session-file (namestring session)
+                   :trim-tokens 500
+                   :compaction-fn (lambda (elided)
+                                    (declare (ignore elided))
+                                    (error "摘要器挂了"))
+                   :on-event (lambda (e) (push e events))))
+           (result (run agent (make-string 4000 :initial-element #\a))))
+      (setf (car turn-log) (nreverse (car turn-log))
+            events (nreverse events))
+      (is (eq :end (result-stop-reason result)))
+      (let ((sums (remove-if-not (lambda (e) (eq (getf e :kind) :summarize)) events))
+            (compacts (remove-if-not (lambda (e) (eq (getf e :kind) :compact)) events)))
+        (is (plusp (length sums)))
+        (is (plusp (length compacts)))
+        (is (getf (first sums) :failed-p))
+        (is (search "摘要器挂了" (getf (first sums) :reason))))
+      (multiple-value-bind (records corrupt) (session-load (namestring session))
+        (is (= 0 corrupt))
+        (is (plusp (length (session-compact-hints records))))
+        (is (null (session-recording-break (car turn-log) records)))))))

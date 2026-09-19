@@ -75,7 +75,10 @@
    #:session-messages-at #:session-events #:session-record->event
    #:session-meta #:session-config #:session-config-digest
    #:session-stop-reason #:session-filter #:session-search
-   #:session-fork #:session-compact-hints #:session-recording-break
+   #:session-fork #:session-compact-hints #:session-summary-messages
+   #:session-recording-break
+   #:agent-compaction-fn #:default-compaction-fn
+   #:+compaction-instruction+ #:build-summary-message #:splice-summary
    #:emit-event)
   (:import-from :clh
    #:+version+ #:make-subagent-tool)

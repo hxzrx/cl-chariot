@@ -132,6 +132,7 @@ grep-files / run-command / fetch-url)见 `src/world.lisp` 头注与
 | `:permission-mode` | `:default` | `:yolo` / `:default` / `:readonly` |
 | `:ask-callback` | NIL | `(lambda (tool-name))` → 非 NIL 放行;缺省时变更类一律拒绝 |
 | `:verify-callback` | NIL | `(lambda (run-result))` → 非 NIL 表示目标达成;见下方「目标验证门」 |
+| `:compaction-fn` | NIL | `(lambda (被省略消息列表))` → (values 摘要文本 用量);超预算时把被丢弃历史折叠为摘要,失败降级纯裁剪;见下方「摘要压缩」 |
 | `:on-event` | NIL | `(lambda (event-plist))`,见 §5 |
 | `:trim-tokens` | NIL | 上下文预算;NIL 不裁剪 |
 | `:session-file` | NIL | JSONL 路径;非 NIL 即启用持久化(含事件镜像与配置摘要,见 §6) |
@@ -145,6 +146,29 @@ grep-files / run-command / fetch-url)见 `src/world.lisp` 头注与
 消息序列保留以便排查与续跑。回调为 NIL(默认)时该门完全关闭。
 回调内部可用 `result-text` / `result-messages` 检查产出,验证手段自定
 (重新读文件、查数据库、调检查接口等)——「干净度」由回调自己保证。
+
+### 摘要压缩(:compaction-fn)
+
+上下文超预算(`:trim-tokens`)时,若配置了压缩器则**先摘要后裁剪**:
+被丢弃的历史交给压缩器折叠为一段摘要,以带统计前缀的 user 消息进入
+发送副本;摘要自身失败(空文本/异常)自动降级为纯裁剪并留痕。
+折叠调用的用量并入运行用量。摘要消息是合成消息,随 `:summarize` 事件
+镜像入日志(「模型可见即已记录」对其成立)。
+
+```lisp
+;; 默认实现:单次无工具的模型调用(经 :chat-fn 注入,非流式)
+(clh:default-compaction-fn agent)   ; → (lambda (被省略消息) → (values 摘要文本 用量))
+
+;; 自定义压缩器:任何 (VALUES 摘要文本 用量) 形态的函数
+(clh:make-agent ...
+                :trim-tokens 60000
+                :compaction-fn (lambda (elided-messages)
+                                 (values (my-internal-summarizer elided-messages) usage)))
+
+;; 纯投影(测试与自定义装配)
+(clh-agent:build-summary-message summary-text elided elided-tokens) ; → 合成 user 消息
+(clh-agent:splice-summary trim-result hint summary-message)         ; → 新请求序列
+```
 
 ### run / run-prompt
 
@@ -197,6 +221,7 @@ grep-files / run-command / fetch-url)见 `src/world.lisp` 头注与
 | `:tool-result` | `:tool-name :call-id :result :error-p :duration` | 执行后 |
 | `:permission-denied` | `:tool-name :call-id :reason` | 审批拒绝 |
 | `:compact` | `:turn :elided-messages :elided-tokens :budget :hint` | 上下文实际裁剪时(只影响发送副本;`:hint` 为注入发送副本的省略提示消息,随事件入日志) |
+| `:summarize` | `:turn :elided-messages :elided-tokens :summary-message :usage` / `:failed-p :reason` | 摘要压缩发生时(成功带摘要消息与折叠用量;失败带原因并降级纯裁剪) |
 | `:stall` | `:turn :streak :signature` | 连续相同工具调用达到上限、即将止损时 |
 | `:verify` | `:passed-p :reason` | 目标验证门判定后(配置了 `:verify-callback` 时) |
 | `:run-end` | `:stop-reason :turns :usage` | 运行结束 |
@@ -268,9 +293,10 @@ meta 记录另携带 `config-digest` 的**配置摘要**(轮数/审批模式/工
 ;; NIL,或 (:kind :not-recorded :turn n :message m)——审计链断裂点
 ```
 
-不变量含义:凡进入模型上下文的消息(含裁剪提示),会话日志里必有记录;
-发送副本可经 `:chat-fn` 注入捕获。本库测试套件对每条带会话文件的脚本化
-运行强制执行该不变量。分叉文件上的派生用法:`session-fork` 复制前缀记录
+不变量含义:凡进入模型上下文的消息(含裁剪提示与摘要压缩的摘要消息,
+分别经 `session-compact-hints` / `session-summary-messages` 留痕),
+会话日志里必有记录;发送副本可经 `:chat-fn` 注入捕获。本库测试套件对
+每条带会话文件的脚本化运行强制执行该不变量。分叉文件上的派生用法:`session-fork` 复制前缀记录
 并追加 `fork` 标记(来源与截取点),配合 `:messages` 投影即可像 git 分支
 一样做止损重试、what-if 对比与回归留存。
 

@@ -239,6 +239,15 @@ PROVIDER 提供 provider/model;CONFIG-CELLS(可选)为 CONFIG-DIGEST 返回的
              :elided-tokens (funcall ref "elided_tokens")
              :budget (funcall ref "budget")
              :hint (funcall ref "hint")))
+      (:summarize
+       (list :kind :summarize
+             :turn (funcall ref "turn")
+             :elided-messages (funcall ref "elided_messages")
+             :elided-tokens (funcall ref "elided_tokens")
+             :failed-p (%record-bool (funcall ref "failed_p"))
+             :reason (funcall ref "reason")
+             :summary-message (funcall ref "summary_message")
+             :usage (funcall ref "usage")))
       (:stall
        (list :kind :stall
              :turn (funcall ref "turn")
@@ -402,11 +411,20 @@ TARGET 已存在时追加而非覆盖。分叉后的 TARGET 可直接作为 RUN 
   "全部 :compact 镜像携带的裁剪提示消息(保持原顺序;未携带提示的
 裁剪镜像——如全部消息被省略、无「保留部分」可告知——不产生条目)。
 提示消息只进入发送副本、以事件形态留痕(见 TRIM-MESSAGES-WITH-STATS),
-不占用 message 记录——「已记录」的成员集合因此 = 消息记录 + 本列表。"
+不占用 message 记录——「已记录」的成员集合因此包含本列表。"
   (loop for record in records
         when (and (eq (session-record-kind record) :compact)
                   (clh-json:jref record "hint"))
           collect (clh-json:jref record "hint")))
+
+(defun session-summary-messages (records)
+  "全部 :summarize 镜像携带的摘要消息(保持原顺序;折叠失败的镜像
+不产生条目)。摘要消息只进入发送副本、以事件形态留痕
+(见 BUILD-SUMMARY-MESSAGE)——「已记录」的成员集合因此包含本列表。"
+  (loop for record in records
+        when (and (eq (session-record-kind record) :summarize)
+                  (clh-json:jref record "summary_message"))
+          collect (clh-json:jref record "summary_message")))
 
 (defun session-recording-break (sent-turns records)
   "校验「模型可见即已记录」不变量:凡进入模型上下文的消息必有记录。
@@ -415,13 +433,15 @@ TARGET 已存在时追加而非覆盖。分叉后的 TARGET 可直接作为 RUN 
 SENT-TURNS:每轮发送给模型的消息列表组成的列表(按轮次顺序;发送副本可经
 :CHAT-FN 注入捕获),RECORDS:SESSION-LOAD 的会话记录。
 「已记录」的成员集合 = message 记录 + :compact 镜像携带的裁剪提示消息
-(SESSION-COMPACT-HINTS)。
+(SESSION-COMPACT-HINTS)+ :summarize 镜像携带的摘要消息
+(SESSION-SUMMARY-MESSAGES)。
 不校验反方向:日志本就包含模型的产出(assistant 消息)与被裁剪后
 从未发出的历史(它们正是日志的价值所在),二者都不是「发送副本」的子集。
 顺序保真等更强的断言(如新会话「日志消息序列 == 最终消息序列」)
 在使用方拥有完整运行上下文时逐案校验。"
   (let* ((recorded (append (session-messages records)
-                           (session-compact-hints records)))
+                           (session-compact-hints records)
+                           (session-summary-messages records)))
          (recorded-codes (mapcar #'clh-json:encode-json recorded)))
     (loop for sent in sent-turns
           for turn from 1
