@@ -1,6 +1,6 @@
 # 更新日志
 
-## [Unreleased]
+## [0.6.0] - 2026-09-19
 
 ### 新增
 - **执行世界(Execution World):内置工具的外部访问 seam**。进程执行、
@@ -14,10 +14,13 @@
     本机实现,适合局部覆写(如替换抓取通道);
   - `make-path-bound-world(root)`:路径前缀受限世界——全部路径操作
     词法限制在 ROOT 之内(绝对路径越界、相对路径 `..` 上跳越过根一律
-    拒绝),呈现路径相对 ROOT,进程以 ROOT 为工作目录。roadmap 中
-    「完整路径沙箱」的 v1(逻辑边界)由此落地;
-  - bwrap/容器等进程级隔离留作另一个世界实现(逻辑边界不拦符号链接
-    与命令自身的外部访问,文档显式声明)。
+    拒绝),呈现路径相对 ROOT,进程以 ROOT 为工作目录;
+  - `make-bwrap-world(root &key name network (writable t))`:bubblewrap
+    进程级沙箱世界——命令经 bwrap 运行(基础系统只读挂载、工作区同路径
+    绑定进入沙箱、默认无网络、IPC/PID/UTS 隔离、/tmp 独立 tmpfs、
+    `--die-with-parent` 防孤儿;挂载顺序保证工作区在 /tmp 之下也不被
+    遮蔽),与路径边界叠加为双层沙箱;`bwrap-usable-p` 预探测可用性
+    (结果进程内记忆),不可用时构造即信号并提示退回路径受限世界。
 - 进程/文件系统原语自 tools-builtin.lisp 移入 world.lisp(同包搬移,
   行为不变,无新依赖)。
 

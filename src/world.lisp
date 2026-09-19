@@ -378,3 +378,78 @@ TOOL-ERROR。词法边界:不追查符号链接,这一点由文档显式声明�
                       (%run-process-with-timeout
                        (format nil "cd ~A && ~A" (%sh-quote root-str) command)
                        timeout))))))
+
+;;; ---------------------------------------------------------------------------
+;;; bubblewrap 沙箱世界(Provider:bwrap)
+;;; ---------------------------------------------------------------------------
+
+(defparameter *bwrap-base-flags*
+  (list "--unshare-ipc" "--unshare-pid" "--unshare-uts" "--die-with-parent")
+  "bubblewrap 固定启用的隔离旗标:IPC/PID/UTS 命名空间隔离,
+以及 --die-with-parent(超时终止外层 shell 时沙箱随之退出,不留孤儿)。")
+
+(defparameter *bwrap-availability* :unknown
+  "bubblewrap 可用性探测缓存::UNKNOWN 未探测,T/NIL 为探测结论。
+探测有真实开销(起一次沙箱进程),内核配置运行期不变,故进程内记忆。")
+
+(defun bwrap-usable-p ()
+  "探测 bubblewrap 是否实际可用:二进制在 PATH 上(缺失时 shell 以 127
+收场),且能完成一次无特权沙箱运行(部分内核/容器环境禁用非特权
+user namespace)。结果经 *BWRAP-AVAILABILITY* 记忆。"
+  (case *bwrap-availability*
+    ((t) t)
+    ((nil) nil)
+    (t (multiple-value-bind (output exit-code timed-out)
+           (%run-process-with-timeout "bwrap --ro-bind / / /bin/true" 30)
+         (declare (ignore output))
+         (setf *bwrap-availability*
+               (and (not timed-out) (eql exit-code 0) t))
+         *bwrap-availability*))))
+
+(defun %bwrap-command (root command &key network writable)
+  "构造把 COMMAND 放进 bubblewrap 沙箱执行的完整 shell 命令:
+基础系统只读挂载(/ 可见不可写),工作区 ROOT 以相同路径绑定进入沙箱
+(可写或只读),/dev /proc 重建、/tmp 为全新 tmpfs;默认无网络。
+cwd 为 ROOT。"
+  (let ((root-q (%sh-quote root)))
+    ;; 挂载顺序即遮蔽顺序:工作区绑定放在 /tmp tmpfs 之后,
+    ;; 工作区即使位于 /tmp 之下也不会被 tmpfs 遮住
+    (format nil "~{~A~^ ~}"
+            (cons "bwrap"
+                  (append *bwrap-base-flags*
+                          (unless network '("--unshare-net"))
+                          (list "--ro-bind" "/" "/"
+                                "--dev" "/dev" "--proc" "/proc" "--tmpfs" "/tmp"
+                                (if writable "--bind" "--ro-bind") root-q root-q
+                                "--chdir" root-q
+                                "/bin/sh" "-c" (%sh-quote command)))))))
+
+(defun make-bwrap-world (root &key name network (writable t))
+  "构造 bubblewrap 进程级沙箱执行世界:
+  - bash 命令经 bwrap 运行——基础系统只读、工作区 ROOT 同路径绑定
+    (WRITABLE 非 NIL(默认)可写,NIL 只读)、默认无网络(NETWORK 非 NIL
+    开启)、IPC/PID/UTS 隔离、/tmp 独立 tmpfs、cwd 为 ROOT;
+  - 文件/目录操作沿用路径边界逻辑(MAKE-PATH-BOUND-WORLD)——命令的
+    进程级隔离与文件访问的词法边界在此叠加为两层。
+bubblewrap 不可用(未安装或内核禁用非特权 user namespace)时信号
+TOOL-ERROR;可用性可先经 BWRAP-USABLE-P 探测。沙箱约束的是命令进程;
+审批层(:permission-mode)仍按工具粒度独立生效。"
+  (unless (bwrap-usable-p)
+    (tool-error
+     (format nil "bubblewrap 不可用(未安装或内核禁用非特权 user namespace);可退回路径受限世界 make-path-bound-world")))
+  (let* ((root-str (namestring (uiop:ensure-directory-pathname (pathname root))))
+         (base (make-path-bound-world root-str :name "path-bound-under-bwrap")))
+    (make-execution-world
+     :name (or name (format nil "bwrap(~A)" root-str))
+     :resolve-path (world-resolve-path base)
+     :file-exists-p (world-file-exists-p base)
+     :read-file (world-read-file base)
+     :write-file (world-write-file base)
+     :collect-matching-files (world-collect-matching-files base)
+     :grep-files (world-grep-files base)
+     :run-command (lambda (command timeout)
+                    (%run-process-with-timeout
+                     (%bwrap-command root-str command
+                                     :network network :writable writable)
+                     timeout))
+     :fetch-url (world-fetch-url base))))

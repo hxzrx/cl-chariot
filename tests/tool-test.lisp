@@ -523,3 +523,66 @@
            ;; 世界隔离性:两次独立构造的世界互不共享状态
            (is (execution-world-p world)))
       (funcall cleanup))))
+
+;;; ---------- bubblewrap 沙箱世界 ----------
+
+(test bwrap-usable-p-returns-boolean
+  ;; 探测可重复调用且结论一致(结果经缓存记忆)
+  (is (eq (bwrap-usable-p) (bwrap-usable-p)))
+  (is (member (bwrap-usable-p) '(t nil))))
+
+(test bwrap-command-construction
+  ;; 命令构造:默认无网络、可写工作区;选项翻转与根路径单引号包裹生效
+  (let ((cmd (clh-tools::%bwrap-command "/srv/app" "echo hi" :network nil :writable t)))
+    (is (search "bwrap" cmd))
+    (is (search "--unshare-ipc" cmd))
+    (is (search "--unshare-pid" cmd))
+    (is (search "--unshare-uts" cmd))
+    (is (search "--die-with-parent" cmd))
+    (is (search "--unshare-net" cmd))
+    (is (search "--ro-bind / /" cmd))
+    (is (search "--bind '/srv/app' '/srv/app'" cmd))
+    (is (search "--tmpfs /tmp" cmd))
+    (is (search "--chdir '/srv/app'" cmd))
+    (is (search "'echo hi'" cmd)))
+  (let ((cmd (clh-tools::%bwrap-command "/srv/app" "echo hi" :network t :writable nil)))
+    (is (not (search "--unshare-net" cmd)))
+    (is (search "--ro-bind '/srv/app' '/srv/app'" cmd))))
+
+(test bwrap-world-smoke
+  ;; 仅在 bubblewrap 实际可用时执行实测;不可用则跳过
+  (if (bwrap-usable-p)
+      (multiple-value-bind (root outside cleanup) (world-test-root)
+        (declare (ignore outside))
+        (unwind-protect
+             (let* ((world (make-bwrap-world root))
+                    (tools (make-builtin-tools :world world)))
+               (is (execution-world-p world))
+               ;; 进程在沙箱内:cwd = 受限根
+               (multiple-value-bind (result err-p)
+                   (execute-tool (find-tool tools "bash")
+                                 (parse-json "{\"command\":\"pwd\"}"))
+                 (is (null err-p))
+                 (is (search (string-right-trim "/" root) result)))
+               ;; 沙箱内写入落到真实磁盘的根内
+               (multiple-value-bind (result err-p)
+                   (execute-tool (find-tool tools "bash")
+                                 (parse-json "{\"command\":\"touch bwrap-made.txt\"}"))
+                 (is (null err-p))
+                 (is (uiop:file-exists-p
+                      (merge-pathnames "bwrap-made.txt" (pathname root)))))
+               ;; 只读模式:工作区写入失败,非零退出码附于结果
+               (let ((ro (make-bwrap-world root :writable nil)))
+                 (multiple-value-bind (result err-p)
+                     (execute-tool (find-tool (make-builtin-tools :world ro) "bash")
+                                   (parse-json "{\"command\":\"touch denied.txt\"}"))
+                   (declare (ignore err-p))
+                   (is (search "退出码" result))))
+               ;; 文件操作仍是路径边界:越界拒绝
+               (multiple-value-bind (result err-p)
+                   (execute-tool (find-tool tools "read")
+                                 (parse-json "{\"file_path\":\"../escape.txt\"}"))
+                 (is (not (null err-p)))
+                 (is (search "越界" result))))
+          (funcall cleanup)))
+      (skip "bubblewrap 不可用,跳过沙箱实测")))

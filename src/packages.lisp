@@ -176,6 +176,8 @@ HTTP 传输通过动态变量 *http-post-fn* 注入,便于测试与替换。")
    #:execution-world-p
    #:make-execution-world
    #:make-path-bound-world
+   #:make-bwrap-world
+   #:bwrap-usable-p
    #:make-builtin-tools))
 
 (defpackage :clh-agent

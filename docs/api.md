@@ -90,6 +90,11 @@ clh-tools:+builtin-tools+                  ; 等价于 (make-builtin-tools)—�
 ;; 路径前缀受限世界:词法限制在 ROOT 内,呈现相对路径,进程以 ROOT 为 cwd
 (clh-tools:make-path-bound-world "/srv/app" &key name)
 
+;; bubblewrap 进程级沙箱世界:路径边界 + 命令在内核命名空间隔离下运行
+;; (基础系统只读、工作区绑定挂载、默认无网络、IPC/PID/UTS 隔离)
+(clh-tools:make-bwrap-world "/srv/app" &key name network writable)
+(clh-tools:bwrap-usable-p)                 ; 预探测(结果进程内记忆)
+
 ;; 智能体使用受限世界
 (clh:make-agent :provider p
                 :tools (clh-tools:make-builtin-tools
@@ -100,8 +105,9 @@ clh-tools:+builtin-tools+                  ; 等价于 (make-builtin-tools)—�
 file-exists-p / read-file / write-file / collect-matching-files /
 grep-files / run-command / fetch-url)见 `src/world.lisp` 头注与
 `make-execution-world` 文档。`make-path-bound-world` 是**逻辑边界**:
-不拦符号链接穿越与命令自身的外部访问,进程级隔离(bwrap/容器)应作为
-另一个世界实现叠加;审批层仍按工具粒度独立生效。
+不拦符号链接穿越与命令自身的外部访问;需要进程级隔离时叠加
+`make-bwrap-world`(命令经 bubblewrap 运行;不可用时构造即信号,
+可先经 `bwrap-usable-p` 探测)。审批层仍按工具粒度独立生效。
 
 ## 3. 智能体
 

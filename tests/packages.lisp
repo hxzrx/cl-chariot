@@ -39,7 +39,8 @@
    #:args-missing-required #:tools-by-names #:+builtin-tools+
    #:builtin-tool-names #:glob->regex
    #:execution-world-p #:make-execution-world
-   #:make-path-bound-world #:make-builtin-tools)
+   #:make-path-bound-world #:make-bwrap-world #:bwrap-usable-p
+   #:make-builtin-tools)
   (:import-from :clh-mcp
    #:mcp-error #:mcp-error-code #:mcp-error-message #:mcp-timeout
    #:mcp-connection-error
