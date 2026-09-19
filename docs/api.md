@@ -75,6 +75,34 @@ clh-tools:+builtin-tools+     ; 工具列表
 
 各工具参数见其 `:description`(会原样进入模型可见的 Schema)。
 
+### 执行世界(Execution World)
+
+内置工具的全部外部访问(进程/文件/目录/网络)经由**执行世界**进行;
+工具面、JSON Schema 与审批分级不变,替换世界即替换执行环境:
+
+```lisp
+clh-tools:+builtin-tools+                  ; 等价于 (make-builtin-tools)——本机世界
+(clh-tools:make-builtin-tools &key world)  ; 把世界闭包进七件工具的处理函数
+
+;; 局部覆写:未给出的操作槽回落本机实现
+(clh-tools:make-execution-world :fetch-url (lambda (url) ...))
+
+;; 路径前缀受限世界:词法限制在 ROOT 内,呈现相对路径,进程以 ROOT 为 cwd
+(clh-tools:make-path-bound-world "/srv/app" &key name)
+
+;; 智能体使用受限世界
+(clh:make-agent :provider p
+                :tools (clh-tools:make-builtin-tools
+                        :world (clh-tools:make-path-bound-world "/srv/app")))
+```
+
+世界操作面(`execution-world` 结构的八个操作槽:resolve-path /
+file-exists-p / read-file / write-file / collect-matching-files /
+grep-files / run-command / fetch-url)见 `src/world.lisp` 头注与
+`make-execution-world` 文档。`make-path-bound-world` 是**逻辑边界**:
+不拦符号链接穿越与命令自身的外部访问,进程级隔离(bwrap/容器)应作为
+另一个世界实现叠加;审批层仍按工具粒度独立生效。
+
 ## 3. 智能体
 
 ### make-agent

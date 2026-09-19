@@ -9,18 +9,15 @@
 ;;;;   grep       基于正则的内容搜索(逐行,支持 include 过滤与大小写开关)
 ;;;;   web-fetch  抓取网页并抽取正文文本(截断)
 ;;;;
-;;;; 可移植性:进程管理走 uiop,线程走 bordeaux-threads,正则走 cl-ppcre。
-;;;; 路径安全说明:内置工具不做路径沙箱(这是审批层与外部沙箱的职责),
-;;;; 只读工具与变更工具的区分通过 READONLY-P 表达。
+;;;; 本文件是执行世界的 Consumer:参数校验与输出呈现在此,全部外部访问
+;;;; (进程/文件/目录/网络)经 WORLD 操作槽进行(见 world.lisp 的 seam 说明)。
+;;;; 装配:MAKE-BUILTIN-TOOLS(&key world)把世界闭包进各处理函数;
+;;;; +BUILTIN-TOOLS+ 即默认世界(*LOCAL-WORLD*)的装配结果,行为与
+;;;; 引入 seam 之前完全一致。只读工具与变更工具的区分通过 READONLY-P 表达。
 
 (in-package :clh-tools)
 
 (declaim (optimize (speed 1) (safety 3) (debug 3)))
-
-;;; 递归遍历与搜索时跳过的目录名
-(defparameter *skip-directories*
-  '(".git" ".svn" ".hg" "node_modules" "__pycache__" ".venv" "venv" "target" "dist")
-  "glob/grep 递归遍历时跳过的目录名(构建产物与版本控制目录)。")
 
 ;;; ---------------------------------------------------------------------------
 ;;; 参数便捷访问
@@ -48,97 +45,6 @@
           (t (if v t default)))))
 
 ;;; ---------------------------------------------------------------------------
-;;; 路径辅助
-;;; ---------------------------------------------------------------------------
-
-(defun resolve-path (path)
-  "把(可能相对的)路径解析为绝对路径字符串,以进程当前目录为基准。"
-  (let ((p (uiop:ensure-absolute-pathname path (uiop:getcwd))))
-    (uiop:native-namestring p)))
-
-(defun path-exists-p (path) "路径存在性判断。" (probe-file (resolve-path path)))
-
-(defun check-readable-file (path)
-  "断言 PATH 存在且为普通文件,否则信号 TOOL-ERROR。"
-  (let ((p (resolve-path path)))
-    (unless (and (probe-file p) (uiop:file-exists-p p))
-      (tool-error (format nil "文件不存在或不可读:~A" path)))
-    p))
-
-;;; ---------------------------------------------------------------------------
-;;; 目录遍历(glob/grep 共用)
-;;; ---------------------------------------------------------------------------
-
-(defun glob->regex (pattern)
-  "把 glob 模式转换为 cl-ppcre 正则字符串。
-支持:**/(跨目录、可为零层)、**(任意)、*(单段内)、?(单字符)。
-其余字符按字面量转义。"
-  (let ((out (make-string-output-stream))
-        (n (length pattern))
-        (i 0))
-    (loop while (< i n)
-          do (let ((ch (char pattern i)))
-               (cond
-                 ;; **/ → 零层或多层目录(zsh 语义);** → 任意
-                 ((and (char= ch #\*) (< i (1- n)) (char= (char pattern (1+ i)) #\*))
-                  (cond ((and (< (+ i 2) n) (char= (char pattern (+ i 2)) #\/))
-                         (write-string "(?:.*/)?" out)
-                         (incf i 3))
-                        (t
-                         (write-string ".*" out)
-                         (incf i 2))))
-                 ;; * → 单段内任意(不含 /)
-                 ((char= ch #\*) (write-string "[^/]*" out) (incf i))
-                 ((char= ch #\?) (write-string "[^/]" out) (incf i))
-                 (t (write-string (cl-ppcre:quote-meta-chars (string ch)) out)
-                    (incf i)))))
-    (get-output-stream-string out)))
-
-(defun relative-path (path base)
-  "计算 PATH 相对于 BASE 目录的相对路径字符串;不在 BASE 下时返回绝对路径。"
-  (let* ((abs (namestring path))
-         (base-str (namestring base)))
-    (if (and (> (length abs) (length base-str))
-             (string= abs base-str :end2 (length base-str)))
-        (subseq abs (length base-str))
-        abs)))
-
-(defun walk-directory-files (dir)
-  "递归列出 DIR 下所有普通文件的 pathname 列表,跳过 *SKIP-DIRECTORIES*。"
-  (labels ((walk (d)
-             (append
-              (uiop:directory-files d)
-              (loop for sub in (uiop:subdirectories d)
-                    when (and (not (member (car (last (pathname-directory sub)))
-                                           *skip-directories* :test #'string=))
-                              (uiop:directory-exists-p sub))
-                      append (walk sub)))))
-    (walk dir)))
-
-(defun collect-matching-files (pattern &optional start-dir)
-  "按 glob 模式收集文件,返回相对路径字符串列表,按修改时间倒序、同时间按名称升序。
-模式为相对路径时相对 START-DIR(默认当前目录)。"
-  (let* ((base (uiop:ensure-directory-pathname
-                (if start-dir
-                    (resolve-path start-dir)
-                    (uiop:getcwd))))
-         (regex (concatenate 'string "^" (glob->regex pattern) "$"))
-         (matcher (cl-ppcre:create-scanner regex)))
-    (let* ((hits
-             (loop for file in (walk-directory-files base)
-                   for rel = (relative-path file base)
-                   when (cl-ppcre:scan matcher rel)
-                     collect (cons rel (ignore-errors (file-write-date file)))))
-           ;; 按修改时间倒序;file-write-date 缺失时视为 0,再按名称稳定排序
-           (sorted (sort hits
-                         (lambda (a b)
-                           (let ((ta (or (cdr a) 0)) (tb (or (cdr b) 0)))
-                             (if (= ta tb)
-                                 (string< (car a) (car b))
-                                 (> ta tb)))))))
-      (mapcar #'car sorted))))
-
-;;; ---------------------------------------------------------------------------
 ;;; 输出规范化
 ;;; ---------------------------------------------------------------------------
 
@@ -159,72 +65,14 @@
 ;;; bash
 ;;; ---------------------------------------------------------------------------
 
-(defparameter *bash-default-timeout* 120
-  "bash 工具默认超时(秒)。")
-
-(defun %run-process-with-timeout (command-string timeout-seconds)
-  "运行 shell 命令并限时,返回 (VALUES 输出字符串 退出码 是否超时)。
-实现:uiop:launch-program 起 /bin/sh -c,后台线程负责读输出,
-主线程以轮询等待;超时则终止进程并返回已收到的部分输出。
-副作用集中在进程与线程创建——这是执行外部命令的本质。"
-  (let* ((lock (bordeaux-threads:make-lock "clh-bash"))
-         (buffer '())                       ; 输出片段列表(倒序累积)
-         (done nil)
-         (process
-           (uiop:launch-program
-            (list "/bin/sh" "-c"
-                  ;; 用花括号分组把整条命令包起来,重定向才能作用于全部命令
-                  ;; (而非仅最后一个);命令尾部多余的分号需剥离,避免 ";;" 语法错误。
-                  ;; stdin 连接 /dev/null;stderr 合并进 stdout。
-                  (format nil "{ ~A; } </dev/null 2>&1"
-                          (string-right-trim "; " command-string)))
-            :output :stream))
-         (stream (uiop:process-info-output process))
-         (reader-thread
-           (bordeaux-threads:make-thread
-            (lambda ()
-              (handler-case
-                  (loop for line = (read-line stream nil nil)
-                        while line
-                        do (bordeaux-threads:with-lock-held (lock)
-                             (push line buffer))
-                        finally (bordeaux-threads:with-lock-held (lock)
-                                  (setf done t)))
-                (error ()
-                  (bordeaux-threads:with-lock-held (lock)
-                    (setf done t)))))
-            :name "clh-bash-reader")))
-    (let ((deadline (+ (get-internal-real-time)
-                       (* timeout-seconds internal-time-units-per-second)))
-          (timed-out nil))
-      ;; 轮询等待:读线程完成或超时
-      (loop
-        (bordeaux-threads:with-lock-held (lock)
-          (when done (return)))
-        (when (> (get-internal-real-time) deadline)
-          (setf timed-out t)
-          (return))
-        (sleep 0.05))
-      (when timed-out
-        (ignore-errors (uiop:terminate-process process :force t)))
-      ;; 等读线程自然退出(进程终止后 read-line 会失败或返回 EOF)
-      (unless (bordeaux-threads:thread-alive-p reader-thread)
-        nil)
-      (let ((exit-code (ignore-errors (uiop:wait-process process))))
-        (values
-         (bordeaux-threads:with-lock-held (lock)
-           (clh-util:join-string (reverse buffer) (string #\newline)))
-         exit-code
-         timed-out)))))
-
-(defun %bash-handler (args)
+(defun %bash-handler (world args)
   "bash 工具处理函数。"
   (let ((command (arg-string args "command")))
     (unless (and command (plusp (length command)))
       (tool-error "缺少必填参数:command"))
     (let ((timeout (or (arg-integer args "timeout") *bash-default-timeout*)))
       (multiple-value-bind (output exit-code timed-out)
-          (%run-process-with-timeout command timeout)
+          (funcall (world-run-command world) command timeout)
         (let* ((out (truncate-output (if (clh-util:string-blank-p output) "(无输出)" output)))
                (out (if timed-out
                         (format nil "~A~%[命令超时:超过 ~A 秒,已终止]" out timeout)
@@ -244,65 +92,56 @@
 (defparameter *read-max-line-chars* 2000
   "read 工具单行截断长度。")
 
-(defun %read-handler (args)
+(defun %read-handler (world args)
   "read 工具处理函数:带行号读取文件片段。"
-  (let* ((path (check-readable-file (or (arg-string args "file_path")
-                                        (tool-error "缺少必填参数:file_path"))))
-         (offset (max 1 (or (arg-integer args "offset") 1)))
-         (limit (or (arg-integer args "limit") *read-max-lines*)))
-    (with-open-file (in path :direction :input
-                             :if-does-not-exist :error
-                             :external-format :utf-8)
-      (let ((lines '())
-            (line-no 0)
-            (emitted 0)
-            (truncated-lines 0))
-        (loop for raw = (read-line in nil nil)
-              while raw
-              do (incf line-no)
-                 (when (>= line-no offset)
-                   (if (>= emitted limit)
-                       (incf truncated-lines)
-                       (progn
-                         (push (format nil "~6D  ~A"
-                                       line-no
-                                       (clh-util:clamp-string raw *read-max-line-chars* ""))
-                               lines)
-                         (incf emitted)))))
-        (let ((body (clh-util:join-string (nreverse lines) (string #\newline))))
-          (cond ((and (zerop emitted) (zerop truncated-lines))
-                 (format nil "(文件共 ~D 行,请求的起始行 ~D 超出范围)" line-no offset))
-                ((plusp truncated-lines)
-                 (format nil "~A~%[已截断:还有 ~D 行未显示,可用 offset/limit 分段读取]"
-                         body truncated-lines))
-                (t body)))))))
+  (let* ((path (or (arg-string args "file_path")
+                   (tool-error "缺少必填参数:file_path"))))
+    (unless (funcall (world-file-exists-p world) path)
+      (tool-error (format nil "文件不存在或不可读:~A" path)))
+    (let* ((offset (max 1 (or (arg-integer args "offset") 1)))
+           (limit (or (arg-integer args "limit") *read-max-lines*))
+           (text (funcall (world-read-file world) path)))
+      (with-input-from-string (in text)
+        (let ((lines '())
+              (line-no 0)
+              (emitted 0)
+              (truncated-lines 0))
+          (loop for raw = (read-line in nil nil)
+                while raw
+                do (incf line-no)
+                   (when (>= line-no offset)
+                     (if (>= emitted limit)
+                         (incf truncated-lines)
+                         (progn
+                           (push (format nil "~6D  ~A"
+                                         line-no
+                                         (clh-util:clamp-string raw *read-max-line-chars* ""))
+                                 lines)
+                           (incf emitted)))))
+          (let ((body (clh-util:join-string (nreverse lines) (string #\newline))))
+            (cond ((and (zerop emitted) (zerop truncated-lines))
+                   (format nil "(文件共 ~D 行,请求的起始行 ~D 超出范围)" line-no offset))
+                  ((plusp truncated-lines)
+                   (format nil "~A~%[已截断:还有 ~D 行未显示,可用 offset/limit 分段读取]"
+                           body truncated-lines))
+                  (t body))))))))
 
 ;;; ---------------------------------------------------------------------------
 ;;; write
 ;;; ---------------------------------------------------------------------------
 
-(defun %write-handler (args)
+(defun %write-handler (world args)
   "write 工具处理函数:写入文件(覆盖),必要时创建目录;返回简短差异摘要。"
   (let* ((path (or (arg-string args "file_path")
                    (tool-error "缺少必填参数:file_path")))
          (content (or (arg-string args "content")
                       (tool-error "缺少必填参数:content")))
-         (abs (resolve-path path)))
-    (let* ((existed (and (probe-file abs) (uiop:file-exists-p abs)))
-           (old (when existed
-                  (with-open-file (in abs :direction :input :external-format :utf-8)
-                    (with-output-to-string (sink)
-                      (loop for line = (read-line in nil nil)
-                            while line
-                            do (write-line line sink)))))))
-      (ensure-directories-exist abs)
-      (with-open-file (out abs :direction :output
-                                :if-exists :supersede
-                                :if-does-not-exist :create
-                                :external-format :utf-8)
-        (write-string content out))
+         (existed (funcall (world-file-exists-p world) path))
+         (old (when existed
+                (funcall (world-read-file world) path))))
+    (let ((presented (funcall (world-write-file world) path content)))
       (format nil "已写入 ~A(~D 字符~A)"
-              abs
+              presented
               (length content)
               (if existed
                   (format nil ",覆盖原文件,差异概要:~%~A"
@@ -391,28 +230,22 @@
           do (incf n))
     (subseq line 0 n)))
 
-(defun %edit-handler (args)
+(defun %edit-handler (world args)
   "edit 工具处理函数:在文件中替换文本片段。"
   (let* ((path (or (arg-string args "file_path")
                    (tool-error "缺少必填参数:file_path")))
          (old (or (arg-string args "old_text")
                   (tool-error "缺少必填参数:old_text")))
          (new (or (arg-string args "new_text")
-                  (tool-error "缺少必填参数:new_text")))
-         (abs (check-readable-file path)))
-    (let ((text (with-open-file (in abs :direction :input
-                                         :external-format :utf-8)
-                  (with-output-to-string (sink)
-                    (loop for line = (read-line in nil nil)
-                          while line
-                          do (write-line line sink))))))
+                  (tool-error "缺少必填参数:new_text"))))
+    (unless (funcall (world-file-exists-p world) path)
+      (tool-error (format nil "文件不存在或不可读:~A" path)))
+    (let* ((text (funcall (world-read-file world) path))
+           (presented (funcall (world-resolve-path world) path)))
       (multiple-value-bind (new-text how) (%edit-once text old new)
-        (with-open-file (out abs :direction :output
-                                  :if-exists :supersede
-                                  :external-format :utf-8)
-          (write-string new-text out))
+        (funcall (world-write-file world) path new-text)
         (format nil "已编辑 ~A(~A),差异概要:~%~A"
-                abs how
+                presented how
                 (or (ignore-errors (clh-util:simple-diff text new-text)) "(无差异)"))))))
 
 ;;; ---------------------------------------------------------------------------
@@ -422,12 +255,12 @@
 (defparameter *glob-result-limit* 200
   "glob 工具单次返回的路径数上限。")
 
-(defun %glob-handler (args)
+(defun %glob-handler (world args)
   "glob 工具处理函数。"
   (let* ((pattern (or (arg-string args "pattern")
                       (tool-error "缺少必填参数:pattern")))
          (dir (arg-string args "path"))
-         (hits (collect-matching-files pattern dir)))
+         (hits (funcall (world-collect-matching-files world) pattern dir)))
     (if (null hits)
         (format nil "(无匹配文件:模式 ~A)" pattern)
         (format nil "~{~A~^~%~}~@[~%[共 ~D 个匹配,仅显示前 ~D 个]~]"
@@ -441,66 +274,25 @@
 (defparameter *grep-max-line-chars* 250
   "grep 结果单行截断长度。")
 
-(defun file-binary-p (path)
-  "粗略判断文件是否为二进制(首 8KB 内含 NUL 字节则视为二进制)。"
-  (ignore-errors
-    (with-open-file (in path :direction :input :element-type '(unsigned-byte 8))
-      (let ((buffer (make-array 8192 :element-type '(unsigned-byte 8))))
-        (let ((n (read-sequence buffer in :end 8192)))
-          (loop for i from 0 below n
-                thereis (zerop (aref buffer i))))))))
-
-(defun %grep-handler (args)
-  "grep 工具处理函数:正则逐行搜索目录/文件。"
+(defun %grep-handler (world args)
+  "grep 工具处理函数:正则逐行搜索目录/文件(经执行世界)。"
   (let* ((pattern (or (arg-string args "pattern")
                       (tool-error "缺少必填参数:pattern")))
          (path (or (arg-string args "path") "."))
          (include (arg-string args "include"))
          (ignore-case (arg-boolean args "ignore_case" nil))
-         (abs (resolve-path path))
-         (scanner (handler-case
-                      (cl-ppcre:create-scanner pattern :case-insensitive-mode ignore-case)
-                    (error ()
-                      (tool-error (format nil "非法正则:~A" pattern)))))
-         (include-scanner (when include
-                            (cl-ppcre:create-scanner (glob->regex include))))
-         (results '())
-         (total 0))
-    (labels ((scan-file (file rel)
-               (unless (file-binary-p file)
-                 (handler-case
-                     (with-open-file (in file :direction :input
-                                              :external-format :utf-8)
-                       (let ((line-no 0))
-                         (loop for line = (read-line in nil nil)
-                               while line
-                               do (incf line-no)
-                                  (when (cl-ppcre:scan scanner line)
-                                    (incf total)
-                                    (when (<= (length results) *grep-result-limit*)
-                                      (push (format nil "~A:~D:~A"
-                                                    rel line-no
-                                                    (clh-util:clamp-string
-                                                     (clh-util:trim-whitespace line)
-                                                     *grep-max-line-chars* ""))
-                                            results))))))
-                   (error () nil)))))
-      (cond
-        ((and (probe-file abs) (uiop:file-exists-p abs))
-         (scan-file abs (file-namestring abs)))
-        ((uiop:directory-exists-p abs)
-         (let ((base (uiop:ensure-directory-pathname abs)))
-           (dolist (file (walk-directory-files base))
-             (let ((rel (relative-path file base)))
-               (when (or (null include-scanner)
-                         (cl-ppcre:scan include-scanner rel)
-                         (cl-ppcre:scan include-scanner (file-namestring file)))
-                 (scan-file file rel))))))
-        (t (tool-error (format nil "路径不存在:~A" path)))))
+         (matches (funcall (world-grep-files world) pattern path include ignore-case))
+         (total (length matches))
+         (results (loop for (rel line-no line-text) in matches
+                        collect (format nil "~A:~D:~A"
+                                        rel line-no
+                                        (clh-util:clamp-string
+                                         (clh-util:trim-whitespace line-text)
+                                         *grep-max-line-chars* "")))))
     (if (null results)
         (format nil "(无匹配:模式 ~A)" pattern)
         (format nil "~{~A~^~%~}~@[~%[共 ~D 处匹配,仅显示前 ~D 行]~]"
-                (nreverse results)
+                (subseq results 0 (min *grep-result-limit* (length results)))
                 total
                 (min *grep-result-limit* total)))))
 
@@ -531,17 +323,14 @@
     (setf text (cl-ppcre:regex-replace-all "\\n\\s*\\n+" text (string #\newline)))
     (clh-util:trim-whitespace text)))
 
-(defun %web-fetch-handler (args)
+(defun %web-fetch-handler (world args)
   "web-fetch 工具处理函数:GET 页面并抽取正文。"
   (let ((url (or (arg-string args "url")
                  (tool-error "缺少必填参数:url"))))
     (unless (or (cl-ppcre:scan "^https?://" url))
       (tool-error (format nil "仅支持 http(s) URL:~A" url)))
     (multiple-value-bind (body status)
-        (ignore-errors
-          (dexador:get url :force-string t :keep-alive nil
-                           :connect-timeout 10
-                           :read-timeout 30))
+        (funcall (world-fetch-url world) url)
       (unless (and body (<= 200 status 299))
         (tool-error (format nil "抓取失败(HTTP ~A):~A" (or status "?")
                             (typecase body (string (clh-util:clamp-string body 200)) (t "")))))
@@ -555,62 +344,67 @@
 ;;; 工具集装配
 ;;; ---------------------------------------------------------------------------
 
-(setq +builtin-tools+
-      (list
-       (make-tool
-        :name "bash"
-        :description (format nil
-                             "在宿主机 shell(/bin/sh)中执行命令。stderr 会合并到 stdout;stdin 连接到 /dev/null。~
+(defun make-builtin-tools (&key (world *local-world*))
+  "装配内置七件工具,全部外部访问经 WORLD 进行(缺省为本机世界)。
+嵌入方传入自定义世界(如 MAKE-PATH-BOUND-WORLD)即可改变执行环境,
+工具面、JSON Schema 与审批分级保持不变。"
+  (flet ((wired (fn) (lambda (args) (funcall fn world args))))
+    (list
+     (make-tool
+      :name "bash"
+      :description (format nil
+                           "在宿主机 shell(/bin/sh)中执行命令。stderr 会合并到 stdout;stdin 连接到 /dev/null。~
 输出超过上限时保留头尾并省略中段;非零退出码会附在输出末尾。当前工作目录即进程工作目录。")
-        :parameters '(("command" "string" "要执行的 shell 命令" :required)
-                      ("timeout" "integer" "超时秒数,超时将终止进程;默认 120,上限 600"))
-        :readonly-p nil
-        :handler #'%bash-handler)
-       (make-tool
-        :name "read"
-        :description "读取本地文本文件,输出带行号的内容。大文件默认最多返回 2000 行,可 用 offset/limit 分段。"
-        :parameters '(("file_path" "string" "文件路径(相对或绝对)" :required)
-                      ("offset" "integer" "起始行号(从 1 开始),默认 1")
-                      ("limit" "integer" "最多返回行数,默认 2000"))
-        :readonly-p t
-        :handler #'%read-handler)
-       (make-tool
-        :name "write"
-        :description "把完整内容写入文件(整体覆盖),必要时自动创建父目录。返回与原内容的差异概要。"
-        :parameters '(("file_path" "string" "目标文件路径" :required)
-                      ("content" "string" "完整的文件内容" :required))
-        :readonly-p nil
-        :handler #'%write-handler)
-       (make-tool
-        :name "edit"
-        :description (format nil
-                             "把文件中的 old_text 精确替换为 new_text。old_text 必须唯一,~
+      :parameters '(("command" "string" "要执行的 shell 命令" :required)
+                    ("timeout" "integer" "超时秒数,超时将终止进程;默认 120,上限 600"))
+      :readonly-p nil
+      :handler (wired #'%bash-handler))
+     (make-tool
+      :name "read"
+      :description "读取本地文本文件,输出带行号的内容。大文件默认最多返回 2000 行,可 用 offset/limit 分段。"
+      :parameters '(("file_path" "string" "文件路径(相对或绝对)" :required)
+                    ("offset" "integer" "起始行号(从 1 开始),默认 1")
+                    ("limit" "integer" "最多返回行数,默认 2000"))
+      :readonly-p t
+      :handler (wired #'%read-handler))
+     (make-tool
+      :name "write"
+      :description "把完整内容写入文件(整体覆盖),必要时自动创建父目录。返回与原内容的差异概要。"
+      :parameters '(("file_path" "string" "目标文件路径" :required)
+                    ("content" "string" "完整的文件内容" :required))
+      :readonly-p nil
+      :handler (wired #'%write-handler))
+     (make-tool
+      :name "edit"
+      :description (format nil
+                           "把文件中的 old_text 精确替换为 new_text。old_text 必须唯一,~
 出现多次会报歧义错误;找不到时降级为「忽略行首尾空白」的弹性匹配并保留缩进。")
-        :parameters '(("file_path" "string" "目标文件路径" :required)
-                      ("old_text" "string" "要被替换的原文片段" :required)
-                      ("new_text" "string" "替换后的新片段" :required))
-        :readonly-p nil
-        :handler #'%edit-handler)
-       (make-tool
-        :name "glob"
-        :description "按 glob 模式查找文件路径。支持 **(跨目录)、*(单段)、?(单字符);结果按修改时间倒序。"
-        :parameters '(("pattern" "string" "glob 模式,如 src/**/*.lisp" :required)
-                      ("path" "string" "起始目录,默认当前目录"))
-        :readonly-p t
-        :handler #'%glob-handler)
-       (make-tool
-        :name "grep"
-        :description "基于正则表达式逐行搜索文件内容,输出 路径:行号:行文本。自动跳过二进制与 .git 等目录。"
-        :parameters '(("pattern" "string" "正则表达式" :required)
-                      ("path" "string" "搜索的文件或目录,默认当前目录")
-                      ("include" "string" "文件名过滤 glob,如 *.lisp")
-                      ("ignore_case" "boolean" "是否忽略大小写,默认否"))
-        :readonly-p t
-        :handler #'%grep-handler)
-       (make-tool
-        :name "web-fetch"
-        :description "抓取 http(s) 网页,抽取去标签后的正文文本(含 <title>),用于阅读公开网页内容。"
-        :parameters '(("url" "string" "目标 URL" :required))
-        :readonly-p t
-        :handler #'%web-fetch-handler)))
+      :parameters '(("file_path" "string" "目标文件路径" :required)
+                    ("old_text" "string" "要被替换的原文片段" :required)
+                    ("new_text" "string" "替换后的新片段" :required))
+      :readonly-p nil
+      :handler (wired #'%edit-handler))
+     (make-tool
+      :name "glob"
+      :description "按 glob 模式查找文件路径。支持 **(跨目录)、*(单段)、?(单字符);结果按修改时间倒序。"
+      :parameters '(("pattern" "string" "glob 模式,如 src/**/*.lisp" :required)
+                    ("path" "string" "起始目录,默认当前目录"))
+      :readonly-p t
+      :handler (wired #'%glob-handler))
+     (make-tool
+      :name "grep"
+      :description "基于正则表达式逐行搜索文件内容,输出 路径:行号:行文本。自动跳过二进制与 .git 等目录。"
+      :parameters '(("pattern" "string" "正则表达式" :required)
+                    ("path" "string" "搜索的文件或目录,默认当前目录")
+                    ("include" "string" "文件名过滤 glob,如 *.lisp")
+                    ("ignore_case" "boolean" "是否忽略大小写,默认否"))
+      :readonly-p t
+      :handler (wired #'%grep-handler))
+     (make-tool
+      :name "web-fetch"
+      :description "抓取 http(s) 网页,抽取去标签后的正文文本(含 <title>),用于阅读公开网页内容。"
+      :parameters '(("url" "string" "目标 URL" :required))
+      :readonly-p t
+      :handler (wired #'%web-fetch-handler)))))
 
+(setq +builtin-tools+ (make-builtin-tools))

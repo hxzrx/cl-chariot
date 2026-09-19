@@ -41,13 +41,14 @@
                (:file "provider")))
 
 (defsystem "cl-harness/tools"
-  :description "CL-Harness 工具系统:define-tool 与内置工具集"
+  :description "CL-Harness 工具系统:define-tool、执行世界与内置工具集"
   :depends-on ("uiop" "cl-ppcre" "bordeaux-threads" "dexador" "flexi-streams"
                "cl-harness/base")
   :pathname "src/"
   :serial t
   :components ((:file "packages")
                (:file "tool")
+               (:file "world")
                (:file "tools-builtin")))
 
 (defsystem "cl-harness/agent"

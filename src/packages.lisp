@@ -170,7 +170,13 @@ HTTP 传输通过动态变量 *http-post-fn* 注入,便于测试与替换。")
    ;; 注册表辅助
    #:tools-by-names
    #:builtin-tool-names
-   #:+builtin-tools+))
+   #:+builtin-tools+
+   ;; 执行世界(内置工具的外部访问 seam)
+   #:execution-world
+   #:execution-world-p
+   #:make-execution-world
+   #:make-path-bound-world
+   #:make-builtin-tools))
 
 (defpackage :clh-agent
   (:documentation

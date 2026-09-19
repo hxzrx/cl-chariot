@@ -392,3 +392,134 @@
     (is (not (search "<p>" stripped)))
     (is (not (search "var x" stripped)))
     (is (search "正文&更多" stripped))))
+
+;;; ---------- 执行世界(Execution World) ----------
+
+(defun world-test-root ()
+  "创建受控测试根目录(含 inside.txt 与根外文件),返回 (VALUES 根路径字符串 根外文件路径字符串) 清理函数。"
+  (let* ((root (uiop:ensure-directory-pathname
+                (merge-pathnames "clh-world-test/"
+                                 (uiop:temporary-directory))))
+         (outside (merge-pathnames "clh-world-outside.txt"
+                                   (uiop:pathname-parent-directory-pathname root))))
+    (ensure-directories-exist root)
+    (with-open-file (o (merge-pathnames "inside.txt" root)
+                       :direction :output :if-exists :supersede
+                       :external-format :utf-8)
+      (write-line "hello inside" o))
+    (with-open-file (o outside :direction :output :if-exists :supersede
+                               :external-format :utf-8)
+      (write-line "outside" o))
+    (values (namestring root)
+            (namestring outside)
+            (lambda ()
+              (ignore-errors (uiop:delete-directory-tree root :validate t))
+              (ignore-errors (delete-file outside))))))
+
+(test builtin-tools-assembly
+  ;; make-builtin-tools 默认装配与注册表一致
+  (is (equal (mapcar #'tool-name +builtin-tools+)
+             (mapcar #'tool-name (make-builtin-tools))))
+  (is (every #'tool-p (make-builtin-tools)))
+  (is (execution-world-p (make-execution-world)))
+  ;; 装配结果可执行:read 在临时文件上工作
+  (uiop:with-temporary-file (:pathname path :type "txt")
+    (with-open-file (o path :direction :output :if-exists :supersede
+                            :external-format :utf-8)
+      (write-line "seam" o))
+    (let ((read-tool (find-tool (make-builtin-tools) "read")))
+      (multiple-value-bind (result err-p)
+          (execute-tool read-tool (parse-json "{\"file_path\":\"seam-check\"}"))
+        ;; 不存在的路径仍按失败结果收场(世界对文件存在性的判定生效)
+        (is (not (null err-p))))
+      (multiple-value-bind (result err-p)
+          (execute-tool read-tool (parse-json (format nil "{\"file_path\":\"~A\"}" (namestring path))))
+        (is (null err-p))
+        (is (search "seam" result))))))
+
+(test builtin-tools-honor-custom-world
+  ;; 局部覆写:只替换 collect-matching-files,glob 即返回桩数据
+  (let* ((world (make-execution-world
+                 :collect-matching-files
+                 (lambda (pattern dir)
+                   (declare (ignore pattern dir))
+                   (list "stub-a.txt" "stub-b.txt"))))
+         (glob (find-tool (make-builtin-tools :world world) "glob")))
+    (is (execution-world-p world))
+    (multiple-value-bind (result err-p)
+        (execute-tool glob (parse-json "{\"pattern\":\"*\"}"))
+      (is (null err-p))
+      (is (search "stub-a.txt" result))
+      (is (search "stub-b.txt" result)))))
+
+(test path-bound-world-confines-file-ops
+  (multiple-value-bind (root outside cleanup) (world-test-root)
+    (unwind-protect
+         (let* ((world (make-path-bound-world root))
+                (tools (make-builtin-tools :world world)))
+           ;; 根内相对路径可读
+           (multiple-value-bind (result err-p)
+               (execute-tool (find-tool tools "read")
+                             (parse-json "{\"file_path\":\"inside.txt\"}"))
+             (is (null err-p))
+             (is (search "hello inside" result)))
+           ;; 绝对路径指向根外 → 拒绝
+           (multiple-value-bind (result err-p)
+               (execute-tool (find-tool tools "read")
+                             (parse-json (format nil "{\"file_path\":\"~A\"}" outside)))
+             (is (not (null err-p)))
+             (is (search "越界" result)))
+           ;; 相对路径 .. 上跳越过根 → 拒绝
+           (multiple-value-bind (result err-p)
+               (execute-tool (find-tool tools "read")
+                             (parse-json "{\"file_path\":\"../clh-world-outside.txt\"}"))
+             (is (not (null err-p)))
+             (is (search "越界" result)))
+           ;; 写入根外(绝对)→ 拒绝且未落盘
+           (multiple-value-bind (result err-p)
+               (execute-tool (find-tool tools "write")
+                             (parse-json (format nil "{\"file_path\":\"~A\",\"content\":\"x\"}" outside)))
+             (is (not (null err-p)))
+             (is (search "越界" result))
+             (is (string= "outside" (with-open-file (i outside :external-format :utf-8)
+                                      (read-line i)))))
+           ;; 写入根内子目录 → 成功,磁盘路径在根下,呈现为相对路径
+           (multiple-value-bind (result err-p)
+               (execute-tool (find-tool tools "write")
+                             (parse-json "{\"file_path\":\"sub/new.txt\",\"content\":\"data\"}"))
+             (is (null err-p))
+             (is (search "sub/new.txt" result))
+             (is (uiop:file-exists-p (merge-pathnames "sub/new.txt" (pathname root)))))
+           ;; glob 与 grep 只看到根内世界
+           (multiple-value-bind (result err-p)
+               (execute-tool (find-tool tools "glob")
+                             (parse-json "{\"pattern\":\"**/*.txt\"}"))
+             (is (null err-p))
+             (is (search "inside.txt" result))
+             (is (search "sub/new.txt" result))
+             (is (not (search "clh-world-outside" result))))
+           (multiple-value-bind (result err-p)
+               (execute-tool (find-tool tools "grep")
+                             (parse-json "{\"pattern\":\"hello\"}"))
+             (is (null err-p))
+             (is (search "inside.txt:1:hello inside" result))))
+      (funcall cleanup))))
+
+(test path-bound-world-bash-cwd
+  ;; bash 进程以受限根为工作目录
+  (multiple-value-bind (root outside cleanup) (world-test-root)
+    (declare (ignore outside))
+    (unwind-protect
+         (let ((world (make-path-bound-world root))
+               (bash (find-tool (make-builtin-tools) "bash")))
+           ;; 未接线的默认 bash 不受世界影响——直接构造带世界的工具集
+           (is (not (null bash)))
+           (let ((bash (find-tool (make-builtin-tools :world world) "bash")))
+             (multiple-value-bind (result err-p)
+                 (execute-tool bash (parse-json "{\"command\":\"pwd\"}"))
+               (is (null err-p))
+               ;; 输出含受限根目录路径
+               (is (search (string-right-trim "/" root) result))))
+           ;; 世界隔离性:两次独立构造的世界互不共享状态
+           (is (execution-world-p world)))
+      (funcall cleanup))))

@@ -37,7 +37,9 @@
    #:tool-parameters-schema
    #:find-tool #:execute-tool #:tool-error #:validate-tool-args
    #:args-missing-required #:tools-by-names #:+builtin-tools+
-   #:builtin-tool-names #:glob->regex)
+   #:builtin-tool-names #:glob->regex
+   #:execution-world-p #:make-execution-world
+   #:make-path-bound-world #:make-builtin-tools)
   (:import-from :clh-mcp
    #:mcp-error #:mcp-error-code #:mcp-error-message #:mcp-timeout
    #:mcp-connection-error

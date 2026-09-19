@@ -17,7 +17,7 @@ DeepSeek / Qwen / GLM / OpenAI 等多种大模型,提供可编程的智能体主
 | 多厂商 Provider | 内置 DeepSeek / Qwen(通义百炼)/ GLM(智谱)/ OpenAI 预设,任意 OpenAI 兼容端点均可接入 |
 | 流式输出 | SSE 流式解析,文本/思考(reasoning)增量经事件回调逐段交付 |
 | 智能体主循环 | 「模型 → 工具调用 → 结果回喂」多轮循环;轮数/上下文/成本/循环停滞四重护栏 |
-| 工具系统 | `define-tool` 声明式定义工具;自动生成 JSON Schema;内置 bash/read/write/edit/glob/grep/web-fetch 七件 |
+| 工具系统 | `define-tool` 声明式定义工具;自动生成 JSON Schema;内置 bash/read/write/edit/glob/grep/web-fetch 七件;执行世界 seam(`make-builtin-tools :world`)把文件/进程/网络访问与工具面分离,可注入路径受限世界 |
 | MCP 接入 | stdio + Streamable HTTP 双传输 MCP 客户端(协议 2025-11-25,向下兼容);工具零损失桥接;会话过期自动重握手;超时/取消/断连收场 |
 | 审批策略 | yolo / default / readonly 三种模式 + 工具黑白名单 + 可编程询问回调 |
 | 目标验证 | 可编程 `:verify-callback` 验证门:自然结束前强制复验,失败降级 `:unverified`(fail-closed,缺省关闭) |
@@ -122,7 +122,7 @@ demo/run.sh          # 依次运行三个渐进式示例
 ### 4. 运行测试
 
 ```bash
-tests/run.sh                          # 离线全量测试(827 项断言)
+tests/run.sh                          # 离线全量测试(859 项断言)
 CLH_LIVE=1 tests/run.sh               # 附加真机联调(需 API Key)
 ```
 
@@ -221,7 +221,10 @@ cl-harness/
 以下是尚未实现、但架构已预留接缝的能力:
 
 - **工具并行执行**——工具已带 `readonly-p` 并行安全分级,执行器仍为顺序(确定性优先);
-- **完整路径沙箱**——v1 以审批层为安全边界,进程级隔离(如 bwrap)留作扩展;
+- **进程级沙箱**——路径前缀边界已落地(`make-path-bound-world`:词法限制
+  根目录、呈现相对路径、进程以根为工作目录;属逻辑边界,不拦符号链接
+  与命令自身的外部访问);bwrap/容器等进程级隔离作为另一个执行世界实现
+  留作扩展(执行世界 seam 见 `src/world.lisp`);
 - **Policy pack(版本化配置工件)**——当出现以下任一场景时再建:维护多套
   提示词/预算 profile、建立任务套件做 A/B 对比、或考虑自动化调优。届时配置
   打包为纯数据(semver + 指纹,当前 `config-digest` 已提供摘要雏形),并遵循

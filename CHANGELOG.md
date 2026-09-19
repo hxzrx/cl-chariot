@@ -1,5 +1,26 @@
 # 更新日志
 
+## [Unreleased]
+
+### 新增
+- **执行世界(Execution World):内置工具的外部访问 seam**。进程执行、
+  文件读写、目录枚举、内容搜索、网络抓取统一经由 `execution-world`
+  结构的八个操作槽进行(见 `src/world.lisp`);工具处理函数退化为
+  纯消费者(参数校验 + 呈现),工具面、JSON Schema 与审批分级不受影响。
+  - `make-builtin-tools(&key world)`:装配内置七件工具;`+builtin-tools+`
+    即默认本机世界(`*local-world*`)的装配结果,行为与引入 seam 前
+    完全一致(全部既有断言原样通过);
+  - `make-execution-world(&key …)`:构造自定义世界,未给出的操作槽回落
+    本机实现,适合局部覆写(如替换抓取通道);
+  - `make-path-bound-world(root)`:路径前缀受限世界——全部路径操作
+    词法限制在 ROOT 之内(绝对路径越界、相对路径 `..` 上跳越过根一律
+    拒绝),呈现路径相对 ROOT,进程以 ROOT 为工作目录。roadmap 中
+    「完整路径沙箱」的 v1(逻辑边界)由此落地;
+  - bwrap/容器等进程级隔离留作另一个世界实现(逻辑边界不拦符号链接
+    与命令自身的外部访问,文档显式声明)。
+- 进程/文件系统原语自 tools-builtin.lisp 移入 world.lisp(同包搬移,
+  行为不变,无新依赖)。
+
 ## [0.5.0] - 2026-09-19
 
 ### 新增
