@@ -9,9 +9,9 @@
 ;;;;
 ;;;; 真实子进程测试依赖 python3;缺失时自动跳过(skip)而不失败。
 
-(in-package :clh-test)
+(in-package :chariot-test)
 
-(def-suite mcp-suite :description "clh-mcp MCP 客户端(stdio)")
+(def-suite mcp-suite :description "chariot-mcp MCP 客户端(stdio)")
 (in-suite mcp-suite)
 
 ;;; ---------- 基础设施 ----------
@@ -40,7 +40,7 @@
 COMPONENT-PATHNAME 才会包含系统定义的 :pathname(tests/),源目录本身不含。"
   (uiop:native-namestring
    (merge-pathnames "fake-mcp-server.py"
-                    (asdf:component-pathname (asdf:find-system :cl-harness/test)))))
+                    (asdf:component-pathname (asdf:find-system :cl-chariot/test)))))
 
 (defun start-fake-server (&rest args)
   "建立到假 MCP 服务器的客户端连接(未握手)。ARGS 透传 MAKE-MCP-CLIENT:
@@ -55,14 +55,14 @@ COMPONENT-PATHNAME 才会包含系统定义的 :pathname(tests/),源目录本身
 
 (defun %bare-client ()
   "构造无进程、无线程的裸客户端对象(分派逻辑单测用)。"
-  (clh-mcp::%make-mcp-client :name "bare"
+  (chariot-mcp::%make-mcp-client :name "bare"
                              :stdin (make-string-output-stream)
                              :stdout (make-string-input-stream "")))
 
 (defun %stdin-content (client)
   "取出裸客户端出站队列的首行 JSON(单测场景无写线程,响应滞留队列)。"
-  (bt:with-lock-held ((clh-mcp::mcp-client-lock client))
-    (pop (clh-mcp::mcp-client-outbound-queue client))))
+  (bt:with-lock-held ((chariot-mcp::mcp-client-lock client))
+    (pop (chariot-mcp::mcp-client-outbound-queue client))))
 
 (defun %stats (client)
   "调用假服务器的 stats 工具,解析计数 JSON(:OBJ)。"
@@ -70,7 +70,7 @@ COMPONENT-PATHNAME 才会包含系统定义的 :pathname(tests/),源目录本身
 
 (defun %wait-process-dead (client &optional (max-seconds 5))
   "轮询等待服务器进程退出;退出后再留一点时间给读取线程标记断连。"
-  (let ((proc (clh-mcp::mcp-client-process client)))
+  (let ((proc (chariot-mcp::mcp-client-process client)))
     (when proc
       (loop repeat (round (/ max-seconds 0.05))
             while (uiop:process-alive-p proc)
@@ -79,9 +79,9 @@ COMPONENT-PATHNAME 才会包含系统定义的 :pathname(tests/),源目录本身
 
 (defun %register-waiter (client id)
   "在裸客户端上手工注册一个等待者(单测 id 配对用),返回等待者。"
-  (bt:with-lock-held ((clh-mcp::mcp-client-lock client))
-    (let ((w (clh-mcp::%make-waiter id (bt:make-condition-variable))))
-      (setf (gethash id (clh-mcp::mcp-client-pending client)) w)
+  (bt:with-lock-held ((chariot-mcp::mcp-client-lock client))
+    (let ((w (chariot-mcp::%make-waiter id (bt:make-condition-variable))))
+      (setf (gethash id (chariot-mcp::mcp-client-pending client)) w)
       w)))
 
 ;;; ===========================================================================
@@ -248,21 +248,21 @@ COMPONENT-PATHNAME 才会包含系统定义的 :pathname(tests/),源目录本身
 (test dispatch-response-wakes-waiter
   (let ((client (%bare-client)))
     (let ((waiter (%register-waiter client 7)))
-      (clh-mcp::%dispatch-response client 7 '(:obj ("x" . 1)) nil)
-      (is (clh-mcp::%waiter-done-p waiter))
-      (is (null (clh-mcp::%waiter-error-condition waiter)))
-      (is (equal 1 (jref (clh-mcp::%waiter-result waiter) "x"))))
+      (chariot-mcp::%dispatch-response client 7 '(:obj ("x" . 1)) nil)
+      (is (chariot-mcp::%waiter-done-p waiter))
+      (is (null (chariot-mcp::%waiter-error-condition waiter)))
+      (is (equal 1 (jref (chariot-mcp::%waiter-result waiter) "x"))))
     ;; 已超时摘除的 id(无等待者):静默忽略,不报错
-    (clh-mcp::%dispatch-response client 99 nil '(:obj ("code" . -32601)))
-    (is (zerop (clh-mcp::mcp-client-malformed-count client)))))
+    (chariot-mcp::%dispatch-response client 99 nil '(:obj ("code" . -32601)))
+    (is (zerop (chariot-mcp::mcp-client-malformed-count client)))))
 
 (test dispatch-response-error-condition
   (let ((client (%bare-client)))
     (let ((waiter (%register-waiter client "s1")))
-      (clh-mcp::%dispatch-response client "s1" nil
+      (chariot-mcp::%dispatch-response client "s1" nil
                                    '(:obj ("code" . -32602) ("message" . "Unknown tool")))
-      (is (clh-mcp::%waiter-done-p waiter))
-      (let ((condition (clh-mcp::%waiter-error-condition waiter)))
+      (is (chariot-mcp::%waiter-done-p waiter))
+      (let ((condition (chariot-mcp::%waiter-error-condition waiter)))
         (is (not (null condition)))
         (is (typep condition 'mcp-error))
         (is (= -32602 (mcp-error-code condition)))
@@ -270,7 +270,7 @@ COMPONENT-PATHNAME 才会包含系统定义的 :pathname(tests/),源目录本身
 
 (test dispatch-request-method-not-found
   (let ((client (%bare-client)))
-    (clh-mcp::%dispatch-request client "srv-1" "roots/list" '(:obj))
+    (chariot-mcp::%dispatch-request client "srv-1" "roots/list" '(:obj))
     (let ((obj (parse-json (%stdin-content client))))
       (is (string= "srv-1" (jref obj "id")))
       (is (= +jsonrpc-method-not-found+ (jref-path obj "error" "code"))))))
@@ -278,7 +278,7 @@ COMPONENT-PATHNAME 才会包含系统定义的 :pathname(tests/),源目录本身
 (test dispatch-request-builtin-ping
   ;; 未注册的 ping 内置应答:空对象结果
   (let ((client (%bare-client)))
-    (clh-mcp::%dispatch-request client "srv-2" "ping" '(:obj))
+    (chariot-mcp::%dispatch-request client "srv-2" "ping" '(:obj))
     (let* ((obj (parse-json (%stdin-content client)))
            (cells (jobj-alist obj)))
       (is (not (null (assoc "result" cells :test #'string=))) "应有 result 键")
@@ -288,38 +288,38 @@ COMPONENT-PATHNAME 才会包含系统定义的 :pathname(tests/),源目录本身
   (let ((client (%bare-client)))
     (register-request-handler
      client "sample/x" (lambda (params) (declare (ignore params)) '(:obj ("v" . 42))))
-    (clh-mcp::%dispatch-request client "srv-3" "sample/x" '(:obj))
+    (chariot-mcp::%dispatch-request client "srv-3" "sample/x" '(:obj))
     (let ((obj (parse-json (%stdin-content client))))
       (is (equal 42 (jref-path obj "result" "v"))))
     ;; 处理器抛错 → -32603,不影响读取线程
     (register-request-handler
      client "sample/bad" (lambda (params) (declare (ignore params)) (error "boom")))
-    (clh-mcp::%dispatch-request client "srv-4" "sample/bad" '(:obj))
+    (chariot-mcp::%dispatch-request client "srv-4" "sample/bad" '(:obj))
     (let ((obj (parse-json (%stdin-content client))))
       (is (= +jsonrpc-internal-error+ (jref-path obj "error" "code"))))))
 
 (test dispatch-notification-cache-invalidation
   (let ((client (%bare-client))
         (seen '()))
-    (setf (clh-mcp::mcp-client-tools-cache-valid-p client) t
-          (clh-mcp::mcp-client-notification-callback client)
+    (setf (chariot-mcp::mcp-client-tools-cache-valid-p client) t
+          (chariot-mcp::mcp-client-notification-callback client)
           (lambda (method params) (push (list method params) seen)))
-    (clh-mcp::%dispatch-notification client "notifications/tools/list_changed" +json-null+)
+    (chariot-mcp::%dispatch-notification client "notifications/tools/list_changed" +json-null+)
     ;; 缓存失效 + 回调收到通知
-    (is (null (clh-mcp::mcp-client-tools-cache-valid-p client)))
+    (is (null (chariot-mcp::mcp-client-tools-cache-valid-p client)))
     (is (equal "notifications/tools/list_changed" (first (first seen))))
     ;; 回调抛错不影响读取线程(错误被吞掉,客户端状态不受污染)
-    (setf (clh-mcp::mcp-client-notification-callback client)
+    (setf (chariot-mcp::mcp-client-notification-callback client)
           (lambda (method params) (declare (ignore method params)) (error "cb boom")))
-    (clh-mcp::%dispatch-notification client "other" '(:obj))
-    (is (zerop (clh-mcp::mcp-client-malformed-count client)))))
+    (chariot-mcp::%dispatch-notification client "other" '(:obj))
+    (is (zerop (chariot-mcp::mcp-client-malformed-count client)))))
 
 (test handle-line-malformed-tolerance
   (let ((client (%bare-client)))
     ;; 非法 JSON 行 / 非法帧:计数后忽略,不断线
-    (clh-mcp::%handle-line client "这不是JSON")
-    (clh-mcp::%handle-line client "{\"jsonrpc\":\"1.0\"}")
-    (is (= 2 (clh-mcp::mcp-client-malformed-count client)))))
+    (chariot-mcp::%handle-line client "这不是JSON")
+    (chariot-mcp::%handle-line client "{\"jsonrpc\":\"1.0\"}")
+    (is (= 2 (chariot-mcp::mcp-client-malformed-count client)))))
 
 ;;; ===========================================================================
 ;;; 五、真实子进程 stdio 回路(python3 假服务器)
@@ -327,7 +327,7 @@ COMPONENT-PATHNAME 才会包含系统定义的 :pathname(tests/),源目录本身
 
 (test mcp-spawn-injection-seam
   ;; 注入点可替换:注入「stdout 立即 EOF」的假流,验证接缝生效与断连收场
-  (let ((clh-mcp::*mcp-spawn-fn*
+  (let ((chariot-mcp::*mcp-spawn-fn*
           (lambda (command argv)
             (declare (ignore command argv))
             (values (make-string-output-stream)
@@ -535,7 +535,7 @@ COMPONENT-PATHNAME 才会包含系统定义的 :pathname(tests/),源目录本身
   (with-fake-mcp (client "--crash-after" "2")
     (initialize client :timeout 10)
     (%wait-process-dead client)
-    (is (not (uiop:process-alive-p (clh-mcp::mcp-client-process client))))
+    (is (not (uiop:process-alive-p (chariot-mcp::mcp-client-process client))))
     (signals mcp-connection-error (mcp-ping client))))
 
 (test server-request-answered-by-client

@@ -1,8 +1,8 @@
 ;;;; tool-test.lisp —— 工具系统测试
 
-(in-package :clh-test)
+(in-package :chariot-test)
 
-(def-suite tool-suite :description "clh-tools 工具系统")
+(def-suite tool-suite :description "chariot-tools 工具系统")
 (in-suite tool-suite)
 
 ;;; ---------- 工具对象与 Schema ----------
@@ -124,7 +124,7 @@
 (defun setup-fixtures ()
   (setf *fixture-dir*
         (uiop:ensure-directory-pathname
-         (merge-pathnames (format nil "clh-test-~A/" (gen-id "run"))
+         (merge-pathnames (format nil "chariot-test-~A/" (gen-id "run"))
                           (uiop:temporary-directory))))
   (ensure-directories-exist *fixture-dir*)
   ;; 项目树:src/{main,util}.lisp,README.md
@@ -387,7 +387,7 @@
 
 (test web-fetch-html-strip
   ;; 直接测 strip-html 逻辑
-  (let ((stripped (clh-tools::strip-html
+  (let ((stripped (chariot-tools::strip-html
                    "<html><head><title>标题</title></head><body><script>var x=1;</script><p>正文&amp;更多</p></body></html>")))
     (is (not (search "<p>" stripped)))
     (is (not (search "var x" stripped)))
@@ -398,9 +398,9 @@
 (defun world-test-root ()
   "创建受控测试根目录(含 inside.txt 与根外文件),返回 (VALUES 根路径字符串 根外文件路径字符串) 清理函数。"
   (let* ((root (uiop:ensure-directory-pathname
-                (merge-pathnames "clh-world-test/"
+                (merge-pathnames "chariot-world-test/"
                                  (uiop:temporary-directory))))
-         (outside (merge-pathnames "clh-world-outside.txt"
+         (outside (merge-pathnames "chariot-world-outside.txt"
                                    (uiop:pathname-parent-directory-pathname root))))
     (ensure-directories-exist root)
     (with-open-file (o (merge-pathnames "inside.txt" root)
@@ -472,7 +472,7 @@
            ;; 相对路径 .. 上跳越过根 → 拒绝
            (multiple-value-bind (result err-p)
                (execute-tool (find-tool tools "read")
-                             (parse-json "{\"file_path\":\"../clh-world-outside.txt\"}"))
+                             (parse-json "{\"file_path\":\"../chariot-world-outside.txt\"}"))
              (is (not (null err-p)))
              (is (search "越界" result)))
            ;; 写入根外(绝对)→ 拒绝且未落盘
@@ -497,7 +497,7 @@
              (is (null err-p))
              (is (search "inside.txt" result))
              (is (search "sub/new.txt" result))
-             (is (not (search "clh-world-outside" result))))
+             (is (not (search "chariot-world-outside" result))))
            (multiple-value-bind (result err-p)
                (execute-tool (find-tool tools "grep")
                              (parse-json "{\"pattern\":\"hello\"}"))
@@ -533,7 +533,7 @@
 
 (test bwrap-command-construction
   ;; 命令构造:默认无网络、可写工作区;选项翻转与根路径单引号包裹生效
-  (let ((cmd (clh-tools::%bwrap-command "/srv/app" "echo hi" :network nil :writable t)))
+  (let ((cmd (chariot-tools::%bwrap-command "/srv/app" "echo hi" :network nil :writable t)))
     (is (search "bwrap" cmd))
     (is (search "--unshare-ipc" cmd))
     (is (search "--unshare-pid" cmd))
@@ -545,7 +545,7 @@
     (is (search "--tmpfs /tmp" cmd))
     (is (search "--chdir '/srv/app'" cmd))
     (is (search "'echo hi'" cmd)))
-  (let ((cmd (clh-tools::%bwrap-command "/srv/app" "echo hi" :network t :writable nil)))
+  (let ((cmd (chariot-tools::%bwrap-command "/srv/app" "echo hi" :network t :writable nil)))
     (is (not (search "--unshare-net" cmd)))
     (is (search "--ro-bind '/srv/app' '/srv/app'" cmd))))
 

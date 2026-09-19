@@ -1,4 +1,4 @@
-;;;; agent.lisp —— CL-Harness 智能体主循环
+;;;; agent.lisp —— CL-Chariot 智能体主循环
 ;;;;
 ;;;; 主循环(参照业界 agent harness 的标准形态):
 ;;;;
@@ -10,14 +10,14 @@
 ;;;;
 ;;;; 设计要点:
 ;;;;   - 状态以值传递推进(loop 局部变量),不修改 AGENT 配置对象;
-;;;;   - 模型调用经 AGENT 的 :CHAT-FN 注入(默认为 CLH-LLM:CHAT 的适配),
+;;;;   - 模型调用经 AGENT 的 :CHAT-FN 注入(默认为 CHARIOT-LLM:CHAT 的适配),
 ;;;;     测试可用脚本化假模型驱动完整循环;
 ;;;;   - 事件(流式增量/工具起止/审批拒绝/轮次与用量)统一经 :ON-EVENT 回调交付,
 ;;;;     CLI 与嵌入方消费同一条事件流;
 ;;;;   - 工具失败不是循环失败:错误作为失败工具结果回喂模型,由模型决定补救;
 ;;;;   - 会话文件(:SESSION-FILE)存在时,每条新消息/每次用量即时落盘(JSONL)。
 
-(in-package :clh-agent)
+(in-package :chariot-agent)
 
 (declaim (optimize (speed 1) (safety 3) (debug 3)))
 
@@ -64,8 +64,8 @@
 
 (defstruct (agent (:constructor %make-agent))
   "智能体配置(不可变;RUN 不修改它)。
-PROVIDER          模型服务配置(CLH-LLM:LLM-CONFIG);
-TOOLS             可用工具列表(CLH-TOOLS:TOOL);
+PROVIDER          模型服务配置(CHARIOT-LLM:LLM-CONFIG);
+TOOLS             可用工具列表(CHARIOT-TOOLS:TOOL);
 SYSTEM-PROMPT     系统提示词;NIL 时用 +DEFAULT-SYSTEM-PROMPT+;
 MAX-TURNS         最大轮数护栏,防止无限循环(默认 40);
 MAX-IDENTICAL-TURNS  连续相同工具调用轮数上限(默认 4,见
@@ -118,7 +118,7 @@ MAX-TOTAL-TOKENS        单次运行累计 token 预算,超限即停(:BUDGET);NI
                                     session-file chat-fn temperature max-tokens
                                     max-total-tokens)
   "构造智能体配置。所有参数见 AGENT 结构文档。
-最小用法:(make-agent :provider (clh-llm:make-provider :deepseek))。"
+最小用法:(make-agent :provider (chariot-llm:make-provider :deepseek))。"
   (declare (ignore provider tools system-prompt max-turns max-identical-turns
                    permission-mode allowed-tools disallowed-tools ask-callback
                    verify-callback on-event trim-tokens compaction-fn
@@ -134,7 +134,7 @@ MAX-TOTAL-TOKENS        单次运行累计 token 预算,超限即停(:BUDGET);NI
     (when hook
       (handler-case (funcall hook event)
         (error (e)
-          (format *error-output* "~&[cl-harness] 事件回调异常(已忽略):~A~%" e)))))
+          (format *error-output* "~&[cl-chariot] 事件回调异常(已忽略):~A~%" e)))))
   (mirror-event-to-session event))
 
 ;;; ---------------------------------------------------------------------------
@@ -246,13 +246,13 @@ TURNS         实际执行的 LLM 调用轮数。"
 ;;; ---------------------------------------------------------------------------
 
 (defun default-chat-fn (provider messages &rest options)
-  "默认模型调用:转发到 CLH-LLM:CHAT。"
-  (apply #'clh-llm:chat provider messages options))
+  "默认模型调用:转发到 CHARIOT-LLM:CHAT。"
+  (apply #'chariot-llm:chat provider messages options))
 
 (defun call-chat (agent messages)
   "经由智能体的注入点调用模型,并把流式增量转换为事件。
 返回 (VALUES assistant消息 usage finish-reason)。"
-  (let* ((tools (mapcar #'clh-tools:tool-json-schema (agent-tools agent)))
+  (let* ((tools (mapcar #'chariot-tools:tool-json-schema (agent-tools agent)))
          (fn (or (agent-chat-fn agent) #'default-chat-fn))
          (on-delta (when (agent-on-event agent)
                      (lambda (kind text)
@@ -286,8 +286,8 @@ TURNS         实际执行的 LLM 调用轮数。"
     (format nil "~{~A~^&~}"
             (mapcar (lambda (call)
                       (format nil "~A|~A"
-                              (clh-msg:tool-call-name call)
-                              (clh-msg:tool-call-arguments call)))
+                              (chariot-msg:tool-call-name call)
+                              (chariot-msg:tool-call-arguments call)))
                     tool-calls))))
 
 (defun config-digest (agent)
@@ -295,7 +295,7 @@ TURNS         实际执行的 LLM 调用轮数。"
 含可读字段与两个非加密散列(系统提示词的 system_prompt_digest、
 覆盖上述全部字段的 config_digest),用于会话 meta 记录——
 事后审计可回答「当时跑的是什么配置」;同配置跨运行摘要一致。"
-  (let* ((tool-names (mapcar #'clh-tools:tool-name (agent-tools agent)))
+  (let* ((tool-names (mapcar #'chariot-tools:tool-name (agent-tools agent)))
          (prompt (or (agent-system-prompt agent) +default-system-prompt+))
          (cells (list
                  (cons "max_turns" (agent-max-turns agent))
@@ -319,25 +319,25 @@ TURNS         实际执行的 LLM 调用轮数。"
 失败向上传播,由主循环降级为纯裁剪。"
   (lambda (elided-messages)
     (let* ((transcript
-             (clh-util:join-string
+             (chariot-util:join-string
               (loop for m in elided-messages
                     collect (format nil "[~A] ~A"
-                                    (clh-msg:message-role m)
-                                    (if (clh-msg:message-tool-calls m)
+                                    (chariot-msg:message-role m)
+                                    (if (chariot-msg:message-tool-calls m)
                                         "(工具调用)"
-                                        (clh-util:clamp-string
-                                         (or (clh-msg:message-content m) "")
+                                        (chariot-util:clamp-string
+                                         (or (chariot-msg:message-content m) "")
                                          2000 ""))))
               (string #\newline)))
            (prompt (format nil "~A~%~%~A" +compaction-instruction+ transcript))
            (fn (or (agent-chat-fn agent) #'default-chat-fn)))
       (multiple-value-bind (message usage)
           (funcall fn (agent-provider agent)
-                   (list (clh-msg:make-user-message prompt))
+                   (list (chariot-msg:make-user-message prompt))
                    :tools nil :stream nil :on-delta nil
                    :temperature (agent-temperature agent)
                    :max-tokens (agent-max-tokens agent))
-        (values (clh-msg:message-content message) usage)))))
+        (values (chariot-msg:message-content message) usage)))))
 
 (defun %attempt-summary (agent elided-messages)
   "调用智能体的摘要压缩器,返回 (VALUES 摘要文本 用量 失败原因);
@@ -368,7 +368,7 @@ TURNS         实际执行的 LLM 调用轮数。"
 
 (defun tool-task-call-id (task)
   "任务的调用 ID。"
-  (clh-msg:tool-call-id (tool-task-call task)))
+  (chariot-msg:tool-call-id (tool-task-call task)))
 
 (defun plan-tool-call (agent task)
   "计划期:发 :TOOL-CALL 事件并完成审批(顺序执行,保证事件流确定)。"
@@ -380,7 +380,7 @@ TURNS         实际执行的 LLM 调用轮数。"
     (when tool
       (multiple-value-bind (decision reason)
           (decide-permission (tool-task-name task)
-                             (clh-tools:tool-readonly-p tool)
+                             (chariot-tools:tool-readonly-p tool)
                              :mode (agent-permission-mode agent)
                              :allowed-tools (agent-allowed-tools agent)
                              :disallowed-tools (agent-disallowed-tools agent)
@@ -398,20 +398,20 @@ TASK 只被本线程写入(结果槽),主线程在汇合后读取。"
           (cond ((null tool)
                  (values (format nil "[工具错误] 未知工具:~A(可用:~{~A~^, ~})"
                                  (tool-task-name task)
-                                 (mapcar #'clh-tools:tool-name (agent-tools agent)))
+                                 (mapcar #'chariot-tools:tool-name (agent-tools agent)))
                          t))
                 ((not (tool-task-allowed-p task))
                  (values (format nil "[权限拒绝] 工具 ~A 未能通过审批:~A"
                                  (tool-task-name task)
                                  (tool-task-deny-reason task))
                          t))
-                (t (clh-tools:execute-tool
+                (t (chariot-tools:execute-tool
                     tool
-                    (clh-msg:tool-call-args (tool-task-call task))))))
+                    (chariot-msg:tool-call-args (tool-task-call task))))))
       (setf (tool-task-result task) out
             (tool-task-error-p task) err-p
             (tool-task-duration task)
-            (clh-util:format-duration (- (get-internal-real-time) start))))))
+            (chariot-util:format-duration (- (get-internal-real-time) start))))))
 
 (defun collect-tool-task (agent task)
   "收尾期:按调用顺序发 :TOOL-RESULT / :PERMISSION-DENIED 事件,
@@ -427,7 +427,7 @@ TASK 只被本线程写入(结果槽),主线程在汇合后读取。"
                               :result (tool-task-result task)
                               :error-p (tool-task-error-p task)
                               :duration (tool-task-duration task))))
-  (clh-msg:make-tool-message (tool-task-call-id task)
+  (chariot-msg:make-tool-message (tool-task-call-id task)
                              (tool-task-result task)))
 
 (defun execute-tool-calls (agent tool-calls)
@@ -439,11 +439,11 @@ TASK 只被本线程写入(结果槽),主线程在汇合后读取。"
 消息顺序与会话落盘(落盘只在主线程收尾期发生)。"
   (let ((tasks (mapcar (lambda (call)
                          (%make-tool-task call
-                                          (clh-tools:find-tool
+                                          (chariot-tools:find-tool
                                            (agent-tools agent)
-                                           (clh-msg:tool-call-name call))
-                                          (clh-msg:tool-call-name call)
-                                          (clh-msg:tool-call-arguments call)))
+                                           (chariot-msg:tool-call-name call))
+                                          (chariot-msg:tool-call-name call)
+                                          (chariot-msg:tool-call-arguments call)))
                        tool-calls)))
     ;; ① 计划:审批 + 宣告(顺序)
     (dolist (task tasks)
@@ -452,12 +452,12 @@ TASK 只被本线程写入(结果槽),主线程在汇合后读取。"
     (if (and (agent-parallel-tools agent)
              (every (lambda (task)
                       (and (tool-task-tool task)
-                           (clh-tools:tool-readonly-p (tool-task-tool task))))
+                           (chariot-tools:tool-readonly-p (tool-task-tool task))))
                     tasks))
         (let ((threads (mapcar (lambda (task)
                                  (bordeaux-threads:make-thread
                                   (lambda () (run-tool-task agent task))
-                                  :name "clh-tool"))
+                                  :name "chariot-tool"))
                                tasks)))
           (dolist (thread threads)
             (bordeaux-threads:join-thread thread)))
@@ -534,7 +534,7 @@ MAX-TURNS 覆盖配置中的轮数上限。
           (persist-message agent m)))
       (loop for turn from 1
             with msgs = start-messages
-            with usage = (clh-llm:zero-usage)
+            with usage = (chariot-llm:zero-usage)
             with final-text = nil
             with last-signature = nil
             with identical-streak = 0
@@ -583,7 +583,7 @@ MAX-TURNS 覆盖配置中的轮数上限。
                                                     summary-message))
                               (when summary-usage
                                 (setf usage
-                                      (clh-llm:add-usage usage summary-usage)))
+                                      (chariot-llm:add-usage usage summary-usage)))
                               (emit-event agent
                                           (list :kind :summarize :turn turn
                                                 :elided-messages elided
@@ -610,7 +610,7 @@ MAX-TURNS 覆盖配置中的轮数上限。
                                                      :stop-reason :empty
                                                      :turns turn :usage usage))
                              (return-from run result))))
-                     (setf usage (clh-llm:add-usage usage turn-usage)
+                     (setf usage (chariot-llm:add-usage usage turn-usage)
                            msgs (append msgs (list assistant-message)))
                      (persist-message agent assistant-message)
                      (when (agent-session-file agent)
@@ -629,10 +629,10 @@ MAX-TURNS 覆盖配置中的轮数上限。
                                                    :stop-reason :budget
                                                    :turns turn :usage usage))
                            (return result))))
-                     (let ((content (clh-msg:message-content assistant-message)))
+                     (let ((content (chariot-msg:message-content assistant-message)))
                        (when (and (stringp content) (plusp (length content)))
                          (setf final-text content)))
-                     (let ((tool-calls (clh-msg:message-tool-calls assistant-message)))
+                     (let ((tool-calls (chariot-msg:message-tool-calls assistant-message)))
                        (cond
                          ;; 自然结束:无工具调用
                          ((null tool-calls)
@@ -694,8 +694,8 @@ MAX-TURNS 覆盖配置中的轮数上限。
   "库形态的一站式入口:构造智能体并运行 PROMPT,返回 RUN-RESULT。
 除 PROVIDER 外,所有关键字参数与 MAKE-AGENT 相同。
 示例:
-  (run-prompt (clh-llm:make-provider :deepseek) \"统计当前目录的 Lisp 文件数\"
-              :tools clh-tools:+builtin-tools+ :permission-mode :yolo)"
+  (run-prompt (chariot-llm:make-provider :deepseek) \"统计当前目录的 Lisp 文件数\"
+              :tools chariot-tools:+builtin-tools+ :permission-mode :yolo)"
   (let ((agent (apply #'make-agent :provider provider keys)))
     (run agent prompt)))
 

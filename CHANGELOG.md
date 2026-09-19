@@ -74,7 +74,7 @@
   违例返回断裂点(:kind :not-recorded :turn :message);测试套件对每条
   带会话文件的脚本化运行强制执行。测试断言新会话满足强形态:
   日志消息序列与最终消息序列完全一致。
-- `clh-json:json-object-p` 转正为公开导出(内部表示的判定谓词)。
+- `chariot-json:json-object-p` 转正为公开导出(内部表示的判定谓词)。
 
 ### 修复
 - **续跑时新追加的 prompt 消息此前不落盘**:RUN 的 :MESSAGES 续跑模式
@@ -97,11 +97,11 @@
 - **配置摘要与会话指纹**:`config-digest` 输出智能体配置的可读摘要
   (轮数/审批模式/工具清单/提示词散列)与整体 `config_digest` 指纹
   (FNV-1a 64,非加密,显式 2^64 截断保证跨实现一致,新增
-  `clh-util:fnv-1a-hex`,无新依赖);`:session-file` 的 meta 记录自动携带,
+  `chariot-util:fnv-1a-hex`,无新依赖);`:session-file` 的 meta 记录自动携带,
   事后审计可回答「当时跑的是什么配置」。policy pack(版本化配置工件)
   按其触发条件(多 profile / A/B 对比 / 自动调优)延后,见 README roadmap。
 - **LLM 失败分类:空回复纳入瞬时故障重试**:新增条件
-  `clh-llm:empty-response-error` 与判定 `empty-response-p`;「2xx 但无文本
+  `chariot-llm:empty-response-error` 与判定 `empty-response-p`;「2xx 但无文本
   也无工具调用」(reasoning 模型把生成预算耗于思考的常见形态)与 429/5xx、
   传输层失败同样按指数退避重试。智能体层重试耗尽后以新停止原因 `:empty`
   收场(消息保留,不再向上传播条件)。
@@ -124,7 +124,7 @@
   调用方式完全兼容。嵌套子智能体未启用持久化时不会把事件泄入外层会话。
 - **持续集成(GitHub Actions)**:`.github/workflows/ci.yml`,SBCL 与 CCL
   矩阵全量测试(push/pull_request 触发);测试入口 `tests/run.sh` 支持
-  `CLH_LISP=sbcl|ccl` 选择实现;CI 无需任何 API Key(真机套件自动跳过)。
+  `CHARIOT_LISP=sbcl|ccl` 选择实现;CI 无需任何 API Key(真机套件自动跳过)。
 - **docs/api.md 补 MCP API 参考**:双传输构造、握手、tools 调用与桥接、
   条件体系与命令行接入。
 - **CLI 集成 MCP 服务器(`--mcp`)**:命令行与 REPL 零代码接入 MCP 服务器。
@@ -139,7 +139,7 @@
   事件表中不存在的 `:turn-end` 条目一并修正。
 - **CI 修复测试入口 `tests/run.sh`**:其一,裸 `(asdf:load-system ...)`
   依赖 quicklisp 并不提供的"缺失依赖自动从 dist 安装"行为,CI 上报
-  fiveam not found;改用 `(ql:quickload :cl-harness/test)` 递归安装。
+  fiveam not found;改用 `(ql:quickload :cl-chariot/test)` 递归安装。
   其二,SBCL 的 `--eval` 整表单先读后评,`(require :asdf)` 求值前
   `asdf:` 符号即被读取,在未预载 ASDF 的 SBCL(如 apt 版)直接
   reader 报错;现统一先 `--load ~/quicklisp/setup.lisp` 再 eval。
@@ -166,7 +166,7 @@
 ### 新增
 - **联调用 MCP 测试服务器(`mcp/` 目录)**:基于官方 Python SDK 的
   FastMCP(锁定 `mcp>=1.9,<2`),经 Streamable HTTP 传输对外提供,
-  作为 cl-harness MCP 客户端联调 HTTP 功能的真实目标(部署示例
+  作为 cl-chariot MCP 客户端联调 HTTP 功能的真实目标(部署示例
   `https://cantos.cn/mcp`)。工具面与 stdio 假服务器对齐(echo/只读注解/
   isError/慢工具/structuredContent/图片块/服务端 sampling 拒绝/
   list_changed 缓存失效),内置 Bearer 鉴权中间件与启动护栏
@@ -174,7 +174,7 @@
   systemd 与 nginx(SSE 配置)部署示例及详细文档,已在本地实测
   20/20 通过(协议协商 `2025-06-18` 原样回应、SSE 响应帧、
   `mcp-session-id` 有状态会话均已验证)。
-- **MCP 真机联调套件(`mcp-live-suite`)**:新增 `CLH_MCP_URL`/`CLH_MCP_TOKEN`
+- **MCP 真机联调套件(`mcp-live-suite`)**:新增 `CHARIOT_MCP_URL`/`CHARIOT_MCP_TOKEN`
   环境变量门控,经 mcp-remote 桥接对远程 Streamable HTTP 服务器执行
   握手/ping/工具桥接/只读注解/真实调用断言;未设置时自动跳过。
   已对 cantos.cn 部署端点在 SBCL 与 CCL 上验证通过,离线全量升至
@@ -199,7 +199,7 @@
 ## [0.2.0] - 2026-09-13
 
 ### 新增
-- **MCP 客户端(`cl-harness/mcp`,包 `clh-mcp`)**:经 stdio 传输接入
+- **MCP 客户端(`cl-chariot/mcp`,包 `chariot-mcp`)**:经 stdio 传输接入
   Model Context Protocol 服务器,协议版本 2025-06-18(initialize 握手
   版本协商,向下兼容接受 2025-03-26 / 2024-11-05)。
   - JSON-RPC 2.0 帧层:换行分隔消息的构造/分派为纯函数,错误码与
@@ -234,18 +234,18 @@
 
 ### 修复
 - **传输层错误重试**:连接重置、SSL 截断等网络层失败纳入指数退避重试
-  (此前仅重试 HTTP 429/5xx);新增 `clh-llm:transport-error` 条件。
+  (此前仅重试 HTTP 429/5xx);新增 `chariot-llm:transport-error` 条件。
 - **非流式读取策略**:非流式请求改为让 dexador 整体读取(`:force-string`),
   修复 GLM 网关「200 + Content-Length 响应在 want-stream 流上读不到数据」
   的兼容性问题。
 - **优雅降级**:非流式请求在传输层重试耗尽后自动降级为流式重组
-  (返回值等价),动态变量 `clh-llm:*degrade-non-stream-to-stream*` 可关。
+  (返回值等价),动态变量 `chariot-llm:*degrade-non-stream-to-stream*` 可关。
 - SSE 读取与整体读取对「服务端不发 close_notify 即断开」保持容忍,
   保留已到达的数据,完整性交由 JSON 解析兜底。
 
 ### 新增
-- 真机联调套件厂商化:支持 `CLH_PROVIDER`/`CLH_MODEL`/`CLH_API_KEY`/
-  `CLH_LIVE_EXTRA_BODY` 环境变量,一套用例覆盖全部厂商。
+- 真机联调套件厂商化:支持 `CHARIOT_PROVIDER`/`CHARIOT_MODEL`/`CHARIOT_API_KEY`/
+  `CHARIOT_LIVE_EXTRA_BODY` 环境变量,一套用例覆盖全部厂商。
 - Qwen(`qwen3.8-flash`)与 GLM(`glm-5.3-flash`)真机联调通过:
   SBCL 与 CCL 双实现 × 三厂商(含 DeepSeek)live 套件全部通过。
 

@@ -12,7 +12,7 @@
 ;;;;   - 服务器支持该版本 → 原样回应;
 ;;;;   - 否则回应其支持的另一版本 → 客户端不支持时应断开连接。
 
-(in-package :clh-mcp)
+(in-package :chariot-mcp)
 
 (declaim (optimize (speed 1) (safety 3) (debug 3)))
 
@@ -93,7 +93,7 @@ DATA     JSON-RPC error object 的 data 字段(:OBJ 或其他 JSON 值),可无�
                                    (or (jref error-obj "message") "(无错误信息)"))))
 
 ;;; ---------------------------------------------------------------------------
-;;; 帧构造(:OBJ 形态,交 CLH-JSON:ENCODE-JSON 编码)
+;;; 帧构造(:OBJ 形态,交 CHARIOT-JSON:ENCODE-JSON 编码)
 ;;; ---------------------------------------------------------------------------
 
 (defun make-jsonrpc-request (id method params)
@@ -134,7 +134,7 @@ DATA     JSON-RPC error object 的 data 字段(:OBJ 或其他 JSON 值),可无�
 ;;; 入站分派
 ;;; ---------------------------------------------------------------------------
 
-(defparameter %absent-id% '%clh-mcp-absent-id%
+(defparameter %absent-id% '%chariot-mcp-absent-id%
   "classify-jsonrpc-message 内部哨兵:区分「id 键缺失」与合法的 null id。")
 
 (defun %decode-id (raw)

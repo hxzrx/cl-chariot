@@ -1,25 +1,25 @@
 ;;;; packages.lisp —— 测试套件包定义
 
-(defpackage :clh-test
-  (:documentation "CL-Harness 测试套件(FiveAM)。包含离线单元测试与可开关的真机联调测试。")
+(defpackage :chariot-test
+  (:documentation "CL-Chariot 测试套件(FiveAM)。包含离线单元测试与可开关的真机联调测试。")
   (:use :cl :fiveam)
   ;; FiveAM 亦导出 RUN(其入口 run suite);这里以库层的 run 为准
-  (:shadowing-import-from :clh-agent #:run)
-  (:import-from :clh-util
+  (:shadowing-import-from :chariot-agent #:run)
+  (:import-from :chariot-util
    #:join-string #:split-string #:split-lines #:string-blank-p #:trim-whitespace
    #:clamp-string #:kebab->snake #:snake->kebab-keyword #:alist-ref #:alist-set
    #:merge-alists #:gen-id #:estimate-text-tokens #:simple-diff
    #:format-duration #:fnv-1a-hex)
-  (:import-from :clh-json
+  (:import-from :chariot-json
    #:parse-json #:encode-json #:jref #:jref-path #:jobj-alist #:json-object-p
    #:+json-null+ #:+json-false+ #:+json-true+ #:json-parse-error #:json-encode-error)
-  (:import-from :clh-msg
+  (:import-from :chariot-msg
    #:make-system-message #:make-user-message #:make-assistant-message
    #:make-tool-message #:make-tool-call
    #:message-role #:message-content #:message-tool-calls #:message-tool-call-id
    #:tool-call-id #:tool-call-name #:tool-call-arguments #:tool-call-args
    #:message-text #:last-assistant-text #:copy-message)
-  (:import-from :clh-llm
+  (:import-from :chariot-llm
    #:llm-config #:make-provider #:copy-provider #:provider-name #:provider-model
    #:provider-base-url #:provider-api-key #:provider-preset-names
    #:provider-default-model #:provider-request-url
@@ -31,7 +31,7 @@
    #:empty-response-error #:empty-response-p
    #:build-chat-body #:response->triple #:make-accumulator #:acc-apply-delta
    #:accumulator->message #:accumulator->tool-calls)
-  (:import-from :clh-tools
+  (:import-from :chariot-tools
    #:tool #:tool-p #:make-tool #:make-tool* #:tool-name #:tool-description #:tool-readonly-p
    #:tool-parameters #:tool-schema #:tool-handler #:define-tool #:tool-json-schema
    #:tool-parameters-schema
@@ -41,7 +41,7 @@
    #:execution-world-p #:make-execution-world
    #:make-path-bound-world #:make-bwrap-world #:bwrap-usable-p
    #:make-builtin-tools)
-  (:import-from :clh-mcp
+  (:import-from :chariot-mcp
    #:mcp-error #:mcp-error-code #:mcp-error-message #:mcp-timeout
    #:mcp-connection-error
    #:+mcp-protocol-version+ #:+mcp-supported-versions+
@@ -61,7 +61,7 @@
    #:initialize #:mcp-ping #:list-tools #:call-tool #:close-mcp-client
    #:register-request-handler
    #:mcp-bridged-name #:mcp-content-text #:mcp-tools-from-server)
-  (:import-from :clh-agent
+  (:import-from :chariot-agent
    #:agent #:make-agent #:run-result
    #:result-messages #:result-text #:result-usage #:result-stop-reason
    #:result-turns #:estimate-message-tokens #:estimate-messages-tokens
@@ -81,8 +81,8 @@
    #:+compaction-instruction+ #:build-summary-message #:splice-summary
    #:agent-parallel-tools
    #:emit-event)
-  (:import-from :clh
+  (:import-from :chariot
    #:+version+ #:make-subagent-tool)
-  (:import-from :clh-cli
+  (:import-from :chariot-cli
    #:main #:parse-args #:parse-mcp-spec #:start-mcp-servers #:select-tools)
   (:export #:run-all #:run-offline #:run-live #:*live-model*))

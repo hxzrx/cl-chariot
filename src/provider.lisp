@@ -1,4 +1,4 @@
-;;;; provider.lisp —— CL-Harness 模型接入层
+;;;; provider.lisp —— CL-Chariot 模型接入层
 ;;;;
 ;;;; 职责:
 ;;;;   1. Provider 配置:厂商预设(DeepSeek / Qwen / GLM / OpenAI)+ 自定义覆盖,
@@ -12,7 +12,7 @@
 ;;;; 线程模型:chat 为同步阻塞调用(流式通过 ON-DELTA 回调逐片段交付),
 ;;;; 不引入后台线程,保持库的核心可预测。
 
-(in-package :clh-llm)
+(in-package :chariot-llm)
 
 (declaim (optimize (speed 1) (safety 3) (debug 3)))
 
@@ -47,10 +47,10 @@ reasoning 类模型可能把生成预算耗在思考上而不产出可见内容,
 
 (defun empty-response-p (assistant)
   "判断 assistant 消息是否为「空回复」:无工具调用,且文本缺失或仅空白。"
-  (let ((content (clh-msg:message-content assistant)))
-    (and (null (clh-msg:message-tool-calls assistant))
+  (let ((content (chariot-msg:message-content assistant)))
+    (and (null (chariot-msg:message-tool-calls assistant))
          (or (null content)
-             (clh-util:string-blank-p content)))))
+             (chariot-util:string-blank-p content)))))
 
 (defun check-non-empty-response (assistant)
   "空回复形态检查:为空时信号 EMPTY-RESPONSE-ERROR(交给重试循环)。"
@@ -70,7 +70,7 @@ reasoning 类模型可能把生成预算耗在思考上而不产出可见内容,
 (defun clamp-for-report (body)
   "错误正文中保留前 500 字符用于报告。"
   (typecase body
-    (string (clh-util:clamp-string body 500))
+    (string (chariot-util:clamp-string body 500))
     (t (princ-to-string body))))
 
 ;;; ---------------------------------------------------------------------------
@@ -386,17 +386,17 @@ tool_calls[](工具调用增量,含 index/id/function.name/function.arguments �
   "把累加器中的工具调用分片组装为 wire 格式的 tool_calls 数组(按 index 排序)。
 参数 JSON 字符串为空时规范化为 \"{}\",避免服务端解析歧义。"
   (sort (mapcar (lambda (call)
-                  (clh-msg:make-tool-call
+                  (chariot-msg:make-tool-call
                    (getf call :id "")
                    (getf call :name "")
                    (let ((args (getf call :args "")))
-                     (if (clh-util:string-blank-p args) "{}" args))))
+                     (if (chariot-util:string-blank-p args) "{}" args))))
                 (acc-tool-calls acc))
         #'< :key (lambda (call) (getf call :index 0))))
 
 (defun accumulator->message (acc)
   "把最终累加器状态组装为 assistant 消息。"
-  (clh-msg:make-assistant-message
+  (chariot-msg:make-assistant-message
    :content (let ((c (acc-content acc))) (if (plusp (length c)) c nil))
    :tool-calls (let ((calls (accumulator->tool-calls acc)))
                  (if calls calls nil))))
@@ -427,7 +427,7 @@ EXTRA-BODY 最后合并,可覆盖任何字段。"
         (setf body (append body `(("max_tokens" . ,mt))))))
     (merge-extra-body body (llm-config-extra-body provider))))
 
-(defparameter +absent+ '%clh-llm-absent% "merge-extra-body 内部哨兵,表示「键不存在」。")
+(defparameter +absent+ '%chariot-llm-absent% "merge-extra-body 内部哨兵,表示「键不存在」。")
 
 (defun merge-extra-body (body extra)
   "把 EXTRA(:OBJ)合并进请求体 BODY(:OBJ):同名键覆盖,新键追加。纯函数。"
@@ -452,7 +452,7 @@ EXTRA-BODY 最后合并,可覆盖任何字段。"
          ;; 规范化 message:确保 tool_calls / content 键形如内部约定
          (content (jref message "content"))
          (tool-calls (jref message "tool_calls"))
-         (assistant (clh-msg:make-assistant-message
+         (assistant (chariot-msg:make-assistant-message
                      :content (and (stringp content) (plusp (length content)) content)
                      :tool-calls (and (consp tool-calls) tool-calls))))
     (values assistant usage finish)))

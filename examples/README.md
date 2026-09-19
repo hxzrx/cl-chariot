@@ -17,7 +17,7 @@ ccl -n -b --load examples/mcp-demo.lisp --eval '(quit)'
 
 演示内容:
 1. 启动 MCP 服务器子进程并完成 initialize 握手(协议版本协商);
-2. `mcp-tools-from-server` 把服务器工具桥接为 CL-Harness 工具对象;
+2. `mcp-tools-from-server` 把服务器工具桥接为 CL-Chariot 工具对象;
 3. `execute-tool` 直接执行桥接工具;
 4. 脚本化模型触发工具调用 → 结果回喂 → 最终答复(完整智能体循环);
 5. `annotations.readOnlyHint` 注解到只读分级的映射。

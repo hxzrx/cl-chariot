@@ -1,4 +1,4 @@
-;;;; tools-builtin.lisp —— CL-Harness 内置工具集
+;;;; tools-builtin.lisp —— CL-Chariot 内置工具集
 ;;;;
 ;;;; 内置七件工具(对齐主流编码智能体的工具面):
 ;;;;   bash       执行 shell 命令(超时、进程终止、输出头尾截断、stderr 合并)
@@ -15,7 +15,7 @@
 ;;;; +BUILTIN-TOOLS+ 即默认世界(*LOCAL-WORLD*)的装配结果,行为与
 ;;;; 引入 seam 之前完全一致。只读工具与变更工具的区分通过 READONLY-P 表达。
 
-(in-package :clh-tools)
+(in-package :chariot-tools)
 
 (declaim (optimize (speed 1) (safety 3) (debug 3)))
 
@@ -73,7 +73,7 @@
     (let ((timeout (or (arg-integer args "timeout") *bash-default-timeout*)))
       (multiple-value-bind (output exit-code timed-out)
           (funcall (world-run-command world) command timeout)
-        (let* ((out (truncate-output (if (clh-util:string-blank-p output) "(无输出)" output)))
+        (let* ((out (truncate-output (if (chariot-util:string-blank-p output) "(无输出)" output)))
                (out (if timed-out
                         (format nil "~A~%[命令超时:超过 ~A 秒,已终止]" out timeout)
                         out))
@@ -115,10 +115,10 @@
                          (progn
                            (push (format nil "~6D  ~A"
                                          line-no
-                                         (clh-util:clamp-string raw *read-max-line-chars* ""))
+                                         (chariot-util:clamp-string raw *read-max-line-chars* ""))
                                  lines)
                            (incf emitted)))))
-          (let ((body (clh-util:join-string (nreverse lines) (string #\newline))))
+          (let ((body (chariot-util:join-string (nreverse lines) (string #\newline))))
             (cond ((and (zerop emitted) (zerop truncated-lines))
                    (format nil "(文件共 ~D 行,请求的起始行 ~D 超出范围)" line-no offset))
                   ((plusp truncated-lines)
@@ -146,7 +146,7 @@
               (if existed
                   (format nil ",覆盖原文件,差异概要:~%~A"
                           (or (ignore-errors
-                               (clh-util:simple-diff (or old "") content)))
+                               (chariot-util:simple-diff (or old "") content)))
                           "")
                   ",新建文件")))))
 
@@ -160,7 +160,7 @@
 这是 Edit 工具的第二级匹配策略,容忍模型给出的缩进/行尾空白误差。"
   (let* ((n (length lines))
          (m (length old-lines))
-         (trim (lambda (s) (clh-util:trim-whitespace s))))
+         (trim (lambda (s) (chariot-util:trim-whitespace s))))
     (when (plusp m)
       (loop for i from 0 to (- n m)
             when (loop for j from 0 below m
@@ -183,20 +183,20 @@
        (tool-error (format nil "old_text 在文件中出现 ~D 次,存在歧义;请扩大上下文范围,或改用 write 覆盖整个文件" count)))
       (t
        ;; 弹性匹配降级
-       (let ((lines (clh-util:split-lines text))
-             (old-lines (clh-util:split-lines old))
-             (new-lines (clh-util:split-lines new)))
+       (let ((lines (chariot-util:split-lines text))
+             (old-lines (chariot-util:split-lines old))
+             (new-lines (chariot-util:split-lines new)))
          (multiple-value-bind (start len) (%find-flexible-match lines old-lines)
            (if (null start)
                (tool-error "old_text 未在文件中找到(已尝试精确与忽略空白两种匹配)")
                (let* (;; 保留原块首行的缩进,套到新内容的每一行上
                       (orig-indent (line-indent (nth start lines)))
                       (indented-new (mapcar (lambda (l)
-                                              (if (clh-util:string-blank-p l) l
+                                              (if (chariot-util:string-blank-p l) l
                                                   (concatenate 'string orig-indent l)))
                                             new-lines))
                       (new-text
-                       (clh-util:join-string
+                       (chariot-util:join-string
                         (append (subseq lines 0 start)
                                 indented-new
                                 (subseq lines (+ start len)))
@@ -246,7 +246,7 @@
         (funcall (world-write-file world) path new-text)
         (format nil "已编辑 ~A(~A),差异概要:~%~A"
                 presented how
-                (or (ignore-errors (clh-util:simple-diff text new-text)) "(无差异)"))))))
+                (or (ignore-errors (chariot-util:simple-diff text new-text)) "(无差异)"))))))
 
 ;;; ---------------------------------------------------------------------------
 ;;; glob / grep
@@ -286,8 +286,8 @@
          (results (loop for (rel line-no line-text) in matches
                         collect (format nil "~A:~D:~A"
                                         rel line-no
-                                        (clh-util:clamp-string
-                                         (clh-util:trim-whitespace line-text)
+                                        (chariot-util:clamp-string
+                                         (chariot-util:trim-whitespace line-text)
                                          *grep-max-line-chars* "")))))
     (if (null results)
         (format nil "(无匹配:模式 ~A)" pattern)
@@ -321,7 +321,7 @@
     ;; 压缩空白
     (setf text (cl-ppcre:regex-replace-all "[ \\t]+" text " "))
     (setf text (cl-ppcre:regex-replace-all "\\n\\s*\\n+" text (string #\newline)))
-    (clh-util:trim-whitespace text)))
+    (chariot-util:trim-whitespace text)))
 
 (defun %web-fetch-handler (world args)
   "web-fetch 工具处理函数:GET 页面并抽取正文。"
@@ -333,12 +333,12 @@
         (funcall (world-fetch-url world) url)
       (unless (and body (<= 200 status 299))
         (tool-error (format nil "抓取失败(HTTP ~A):~A" (or status "?")
-                            (typecase body (string (clh-util:clamp-string body 200)) (t "")))))
+                            (typecase body (string (chariot-util:clamp-string body 200)) (t "")))))
       (let ((title (nth-value 1 (cl-ppcre:scan-to-strings "(?is)<title[^>]*>(.*?)</title>" body))))
         (format nil "URL: ~A~%状态: ~A~%~@[标题: ~A~%~%~A~]"
                 url status
-                (when title (clh-util:clamp-string (strip-html (aref title 0)) 200))
-                (clh-util:clamp-string (strip-html body) *web-fetch-limit*))))))
+                (when title (chariot-util:clamp-string (strip-html (aref title 0)) 200))
+                (chariot-util:clamp-string (strip-html body) *web-fetch-limit*))))))
 
 ;;; ---------------------------------------------------------------------------
 ;;; 工具集装配

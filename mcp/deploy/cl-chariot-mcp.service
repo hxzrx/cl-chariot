@@ -1,33 +1,33 @@
-# systemd 单元示例:cl-harness-test MCP 服务器(Streamable HTTP)
+# systemd 单元示例:cl-chariot-test MCP 服务器(Streamable HTTP)
 #
 # 安装步骤(在 cantos.cn 服务器上,按实际情况替换 <> 占位):
-#   1. sudo cp mcp/ /opt/cl-harness-mcp/ -r        # 或 git clone / rsync
-#   2. cd /opt/cl-harness-mcp && python3 -m venv venv
+#   1. sudo cp mcp/ /opt/cl-chariot-mcp/ -r        # 或 git clone / rsync
+#   2. cd /opt/cl-chariot-mcp && python3 -m venv venv
 #      && venv/bin/pip install -r requirements.txt
 #   3. 生成 token:sudo sh -c 'echo MCP_BEARER_TOKEN=$(openssl rand -hex 32)
-#      > /etc/cl-harness-mcp.env && chmod 600 /etc/cl-harness-mcp.env'
-#   4. sudo cp deploy/cl-harness-mcp.service /etc/systemd/system/
-#      && sudo systemctl daemon-reload && sudo systemctl enable --now cl-harness-mcp
+#      > /etc/cl-chariot-mcp.env && chmod 600 /etc/cl-chariot-mcp.env'
+#   4. sudo cp deploy/cl-chariot-mcp.service /etc/systemd/system/
+#      && sudo systemctl daemon-reload && sudo systemctl enable --now cl-chariot-mcp
 #   5. nginx 按本目录 nginx-mcp.conf 配置 /mcp 反代并 reload
 #   6. 从任意外部机器:vpython smoke_test.py https://cantos.cn/mcp <token>
 
 [Unit]
-Description=CL-Harness 联调用 MCP 测试服务器(FastMCP, Streamable HTTP)
+Description=CL-Chariot 联调用 MCP 测试服务器(FastMCP, Streamable HTTP)
 After=network.target
 
 [Service]
 Type=simple
 User=<运行用户,如 www-data 或专用账号>
 Group=<运行用户组>
-WorkingDirectory=/opt/cl-harness-mcp
+WorkingDirectory=/opt/cl-chariot-mcp
 # 鉴权 token 等敏感配置放外部文件(600 权限),不要写进单元文件
-EnvironmentFile=/etc/cl-harness-mcp.env
+EnvironmentFile=/etc/cl-chariot-mcp.env
 Environment=MCP_HOST=127.0.0.1
 Environment=MCP_PORT=8765
 # 必须放行外部域名:SDK 的 DNS 重绑定防护会校验 Host 头,经 nginx 反代后
 # 后端收到的 Host 是 cantos.cn,不在白名单会被 421 拒绝(可多个,逗号分隔)
 Environment=MCP_ALLOWED_HOSTS=cantos.cn
-ExecStart=/opt/cl-harness-mcp/venv/bin/python server.py
+ExecStart=/opt/cl-chariot-mcp/venv/bin/python server.py
 Restart=on-failure
 RestartSec=3
 # 有状态会话在进程内存中,必须单进程(代码内已强制 workers=1)

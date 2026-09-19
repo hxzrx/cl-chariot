@@ -1,8 +1,8 @@
 ;;;; session-test.lisp —— 会话持久化测试
 
-(in-package :clh-test)
+(in-package :chariot-test)
 
-(def-suite session-suite :description "clh-agent 会话层")
+(def-suite session-suite :description "chariot-agent 会话层")
 (in-suite session-suite)
 
 (test session-append-load-roundtrip

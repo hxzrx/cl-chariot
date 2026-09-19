@@ -1,4 +1,4 @@
-;;;; tool.lisp —— CL-Harness 工具系统核心
+;;;; tool.lisp —— CL-Chariot 工具系统核心
 ;;;;
 ;;;; 工具(Tool)是不可变数据对象:
 ;;;;   name         工具名(snake_case,符合模型端函数命名习惯);
@@ -17,7 +17,7 @@
 ;;;; 设计取向:工具定义是纯数据、注册表是普通列表(值语义,无全局可变注册表),
 ;;;; 智能体运行时持有哪个工具集合完全由配置决定,便于测试与组合。
 
-(in-package :clh-tools)
+(in-package :chariot-tools)
 
 (declaim (optimize (speed 1) (safety 3) (debug 3)))
 
@@ -149,7 +149,7 @@ SCHEMA 不是合法 :OBJ 对象时按空对象处理(等价无参数)。"
 ;;; 参数校验与执行
 ;;; ---------------------------------------------------------------------------
 
-(defparameter %no-arg% '%clh-tools-no-arg% "参数缺失校验的内部哨兵。")
+(defparameter %no-arg% '%chariot-tools-no-arg% "参数缺失校验的内部哨兵。")
 
 (defun args-missing-required (tool args)
   "返回 ARGS(:OBJ)缺失的必填参数名列表。纯函数。

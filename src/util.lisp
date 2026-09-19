@@ -1,9 +1,9 @@
-;;;; util.lisp —— CL-Harness 基础工具集
+;;;; util.lisp —— CL-Chariot 基础工具集
 ;;;;
 ;;;; 全部为纯函数(除 gen-id 依赖伪随机数发生器推进状态、now-universal 读取时钟外,
 ;;;; 不产生任何可观察副作用)。本包不依赖 uiop 或任何第三方库,保证可移植性。
 
-(in-package :clh-util)
+(in-package :chariot-util)
 
 (declaim (optimize (speed 1) (safety 3) (debug 3)))
 
@@ -95,7 +95,7 @@ OMIT-BLANKS 为真时丢弃空片段(默认),为假时保留空片段。"
 ;;; ---------------------------------------------------------------------------
 ;;; alist(关联列表)辅助
 ;;;;
-;;; CL-Harness 内部数据(消息、配置、用量)统一使用 keyword-key 的 alist,
+;;; CL-Chariot 内部数据(消息、配置、用量)统一使用 keyword-key 的 alist,
 ;;; 配合纯函数式更新(alist-set / merge-alists 返回新列表,不修改输入)。
 ;;; ---------------------------------------------------------------------------
 

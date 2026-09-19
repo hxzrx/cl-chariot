@@ -1,18 +1,18 @@
-;;;; packages.lisp —— CL-Harness 全部包定义
+;;;; packages.lisp —— CL-Chariot 全部包定义
 ;;;;
 ;;;; 包即模块边界:每个包只导出稳定 API,包间依赖为单向无环:
-;;;;   clh-util / clh-json / clh-msg      (base,纯数据层)
-;;;;   clh-llm                            (模型接入层)
-;;;;   clh-tools                          (工具系统)
-;;;;   clh-agent                          (智能体核心)
-;;;;   clh                                (伞形包,面向使用者的统一入口)
-;;;;   clh-cli                            (命令行前端)
+;;;;   chariot-util / chariot-json / chariot-msg      (base,纯数据层)
+;;;;   chariot-llm                            (模型接入层)
+;;;;   chariot-tools                          (工具系统)
+;;;;   chariot-agent                          (智能体核心)
+;;;;   chariot                                (伞形包,面向使用者的统一入口)
+;;;;   chariot-cli                            (命令行前端)
 ;;;;
 ;;;; 命名约定:内部键一律使用 kebab-case 关键字(如 :tool-call-id),
 ;;;; 序列化为 JSON 时自动转换为 wire 格式的 snake_case(如 tool_call_id)。
 
-(defpackage :clh-util
-  (:documentation "CL-Harness 基础工具集:字符串、列表、alist、标识符与 diff 等纯函数。")
+(defpackage :chariot-util
+  (:documentation "CL-Chariot 基础工具集:字符串、列表、alist、标识符与 diff 等纯函数。")
   (:use :cl)
   (:export
    ;; 字符串
@@ -41,9 +41,9 @@
    #:now-universal
    #:format-duration))
 
-(defpackage :clh-json
+(defpackage :chariot-json
   (:documentation
-   "CL-Harness JSON 层:自研严格 JSON 解析器(RFC 8259)与纯函数编码器。")
+   "CL-Chariot JSON 层:自研严格 JSON 解析器(RFC 8259)与纯函数编码器。")
   (:use :cl)
   (:export
    ;; 解析
@@ -60,11 +60,11 @@
    #:+json-false+
    #:+json-true+))
 
-(defpackage :clh-msg
+(defpackage :chariot-msg
   (:documentation
-   "CL-Harness 消息模型:以 keyword-key alist 表示对话消息与内容块,
+   "CL-Chariot 消息模型:以 keyword-key alist 表示对话消息与内容块,
 与 OpenAI 兼容 wire 格式一一对应,构造与访问均为纯函数。")
-  (:use :cl :clh-util :clh-json)
+  (:use :cl :chariot-util :chariot-json)
   (:export
    ;; 构造
    #:make-system-message
@@ -87,12 +87,12 @@
    #:last-assistant-text
    #:copy-message))
 
-(defpackage :clh-llm
+(defpackage :chariot-llm
   (:documentation
-   "CL-Harness 模型接入层:多厂商 Provider 预设(DeepSeek/Qwen/GLM/OpenAI)、
+   "CL-Chariot 模型接入层:多厂商 Provider 预设(DeepSeek/Qwen/GLM/OpenAI)、
 OpenAI 兼容 Chat API、SSE 流式解析、指数退避重试与 token 用量记账。
 HTTP 传输通过动态变量 *http-post-fn* 注入,便于测试与替换。")
-   (:use :cl :clh-util :clh-json :clh-msg)
+   (:use :cl :chariot-util :chariot-json :chariot-msg)
   (:import-from :uiop #:getenv)
   (:export
    ;; 条件
@@ -138,12 +138,12 @@ HTTP 传输通过动态变量 *http-post-fn* 注入,便于测试与替换。")
    #:usage-prompt-tokens
    #:usage-completion-tokens))
 
-(defpackage :clh-tools
+(defpackage :chariot-tools
   (:documentation
-   "CL-Harness 工具系统:工具是纯数据(struct),由名称、描述、JSON Schema
+   "CL-Chariot 工具系统:工具是纯数据(struct),由名称、描述、JSON Schema
 参数规约、只读标记与处理函数组成;define-tool 宏提供声明式定义。
 内置工具:bash / read / write / edit / glob / grep / web-fetch。")
-  (:use :cl :clh-util :clh-json)
+  (:use :cl :chariot-util :chariot-json)
   (:export
    ;; 条件
    #:tool-error
@@ -180,12 +180,12 @@ HTTP 传输通过动态变量 *http-post-fn* 注入,便于测试与替换。")
    #:bwrap-usable-p
    #:make-builtin-tools))
 
-(defpackage :clh-agent
+(defpackage :chariot-agent
   (:documentation
-   "CL-Harness 智能体核心:主循环(Agent Loop)、上下文 token 估算与裁剪、
+   "CL-Chariot 智能体核心:主循环(Agent Loop)、上下文 token 估算与裁剪、
 审批策略(Permission)、会话持久化(JSONL)。主循环以值传递方式推进状态,
 不修改智能体配置对象本身;模型调用可经 agent 的 :chat-fn 注入替换。")
-  (:use :cl :clh-util :clh-json :clh-msg :clh-llm :clh-tools)
+  (:use :cl :chariot-util :chariot-json :chariot-msg :chariot-llm :chariot-tools)
   (:export
    ;; 智能体配置
    #:agent
@@ -269,20 +269,20 @@ HTTP 传输通过动态变量 *http-post-fn* 注入,便于测试与替换。")
    #:session-summary-messages
    #:session-recording-break))
 
-(defpackage :clh-mcp
+(defpackage :chariot-mcp
   (:documentation
-   "CL-Harness MCP 客户端层:接入 Model Context Protocol 服务器,
-并把服务器提供的 tools 无损桥接为 CL-Harness 工具对象。
+   "CL-Chariot MCP 客户端层:接入 Model Context Protocol 服务器,
+并把服务器提供的 tools 无损桥接为 CL-Chariot 工具对象。
 传输:stdio(子进程)与 Streamable HTTP(POST/SSE/会话管理)。
    - JSON-RPC 2.0 帧:换行分隔、UTF-8;构造与分派为纯函数(mcp-jsonrpc);
    - 客户端连接:后台线程(stdio)或同步抽流(http)、按 id 配对的等待
      注册表、逐请求超时与取消通知(mcp-client / mcp-http);
-   - 工具桥接:tools/list 结果直接携带现成 JSON Schema(经 CLH-TOOLS:MAKE-TOOL*
+   - 工具桥接:tools/list 结果直接携带现成 JSON Schema(经 CHARIOT-TOOLS:MAKE-TOOL*
      零损失构造),tools/call 结果的 content 块拼接为文本(mcp-tools)。
 未做范围:sampling/roots/elicitation 等服务端→客户端能力(收到未支持的
 请求时按规范回 -32601 method-not-found)、resources/prompts、
 HTTP 的 GET 长监听流、OAuth 2.1。")
-  (:use :cl :clh-util :clh-json :clh-tools)
+  (:use :cl :chariot-util :chariot-json :chariot-tools)
   (:export
    ;; 条件
    #:mcp-error
@@ -337,24 +337,24 @@ HTTP 的 GET 长监听流、OAuth 2.1。")
    #:mcp-content-text
    #:mcp-tools-from-server))
 
-(defpackage :clh
+(defpackage :chariot
   (:documentation
-   "CL-Harness 统一入口:重新导出各层稳定 API,并提供子智能体(Subagent)工具。")
+   "CL-Chariot 统一入口:重新导出各层稳定 API,并提供子智能体(Subagent)工具。")
   (:use :cl)
-  (:import-from :clh-util
+  (:import-from :chariot-util
    #:join-string #:estimate-text-tokens)
-  (:import-from :clh-json
+  (:import-from :chariot-json
    #:parse-json #:encode-json #:jref)
-  (:import-from :clh-msg
+  (:import-from :chariot-msg
    #:make-user-message #:make-system-message #:message-content #:message-text
    #:make-tool-call #:tool-call-args)
-  (:import-from :clh-llm
+  (:import-from :chariot-llm
    #:make-provider #:chat #:provider-preset-names #:provider-name #:provider-model
    #:api-error #:api-error-status)
-  (:import-from :clh-tools
+  (:import-from :chariot-tools
    #:make-tool #:tool-name #:tool-readonly-p #:find-tool #:+builtin-tools+
    #:builtin-tool-names #:tools-by-names #:tool-json-schema)
-  (:import-from :clh-agent
+  (:import-from :chariot-agent
    #:make-agent #:run #:run-prompt #:agent-provider #:agent-tools #:agent-max-turns
    #:agent-system-prompt #:agent-permission-mode #:agent-on-event
    #:result-text #:result-usage #:result-stop-reason #:result-turns
@@ -393,21 +393,21 @@ HTTP 的 GET 长监听流、OAuth 2.1。")
    ;; 杂项
    #:emit-event))
 
-(defpackage :clh-cli
-  (:documentation "CL-Harness 命令行前端:参数解析、一次性执行与交互式 REPL。")
-  (:use :cl :clh-util)
-  (:import-from :clh-llm
+(defpackage :chariot-cli
+  (:documentation "CL-Chariot 命令行前端:参数解析、一次性执行与交互式 REPL。")
+  (:use :cl :chariot-util)
+  (:import-from :chariot-llm
    #:make-provider #:provider-preset-names #:provider-name #:provider-model
    #:copy-provider #:usage-total-tokens #:usage-prompt-tokens #:usage-completion-tokens)
-  (:import-from :clh-tools
+  (:import-from :chariot-tools
    #:+builtin-tools+ #:builtin-tool-names #:tool-name #:tools-by-names)
-  (:import-from :clh-agent
+  (:import-from :chariot-agent
    #:make-agent #:run #:agent-provider #:agent-tools #:agent-system-prompt
    #:agent-max-turns #:agent-permission-mode #:agent-on-event
    #:result-text #:result-usage #:result-stop-reason #:result-turns)
-  (:import-from :clh
+  (:import-from :chariot
    #:make-subagent-tool)
-  (:import-from :clh-mcp
+  (:import-from :chariot-mcp
    #:make-mcp-client
    #:make-mcp-http-client
    #:initialize

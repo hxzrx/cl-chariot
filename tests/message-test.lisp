@@ -1,8 +1,8 @@
 ;;;; message-test.lisp —— 消息模型测试
 
-(in-package :clh-test)
+(in-package :chariot-test)
 
-(def-suite message-suite :description "clh-msg 消息模型")
+(def-suite message-suite :description "chariot-msg 消息模型")
 (in-suite message-suite)
 
 (test constructors

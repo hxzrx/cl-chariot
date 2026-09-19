@@ -1,6 +1,6 @@
-;;;; mcp-tools.lisp —— MCP 工具 → CL-Harness 工具对象桥接
+;;;; mcp-tools.lisp —— MCP 工具 → CL-Chariot 工具对象桥接
 ;;;;
-;;;; 把 MCP 服务器 tools/list 暴露的每个工具转换为 CLH-TOOLS:TOOL:
+;;;; 把 MCP 服务器 tools/list 暴露的每个工具转换为 CHARIOT-TOOLS:TOOL:
 ;;;;   name         前缀 + 服务器名 + 工具名整体前缀(默认 mcp__<server>__<tool>,
 ;;;;                避免与内置工具/其他服务器的同名工具冲突;MCP 工具名中的
 ;;;;                连字符等字符原样保留);
@@ -16,7 +16,7 @@
 ;;;; 安全提醒(来自 MCP 规范):工具注解(含 readOnlyHint)应视为不可信,
 ;;;; 只读判断仅作优化提示,不做安全边界。
 
-(in-package :clh-mcp)
+(in-package :chariot-mcp)
 
 (declaim (optimize (speed 1) (safety 3) (debug 3)))
 
@@ -44,7 +44,7 @@
           tool-name))
 
 (defun %bridge-tool (client server-name raw &optional (prefix *mcp-default-name-prefix*))
-  "把单个 MCP 工具描述(:OBJ)转换为 CLH-TOOLS:TOOL。"
+  "把单个 MCP 工具描述(:OBJ)转换为 CHARIOT-TOOLS:TOOL。"
   (let* ((tool-name (jref raw "name"))
          (bridged-name (mcp-bridged-name server-name tool-name prefix))
          (description (or (let ((d (jref raw "description")))
@@ -54,7 +54,7 @@
          (schema (let ((s (jref raw "inputSchema")))
                    (if (jobj-alist s) s '(:obj ("type" . "object")))))
          (readonly-p (eq (jref-path raw "annotations" "readOnlyHint") +json-true+)))
-    (clh-tools:make-tool*
+    (chariot-tools:make-tool*
      :name bridged-name
      :description description
      :schema schema
@@ -71,21 +71,21 @@
       (multiple-value-bind (text error-p)
           (call-tool client tool-name args)
         (when error-p
-          (clh-tools:tool-error
+          (chariot-tools:tool-error
            (format nil "MCP 工具 ~A 执行失败:~A" tool-name text)))
         text)
     (mcp-timeout (e)
-      (clh-tools:tool-error
+      (chariot-tools:tool-error
        (format nil "MCP 工具 ~A 调用超时:~A" tool-name e)))
     (mcp-connection-error (e)
-      (clh-tools:tool-error
+      (chariot-tools:tool-error
        (format nil "MCP 服务器连接不可用(工具 ~A):~A" tool-name e)))
     (mcp-error (e)
-      (clh-tools:tool-error
+      (chariot-tools:tool-error
        (format nil "MCP 工具 ~A 调用失败:~A" tool-name e)))))
 
 (defun mcp-tools-from-server (client &key (name-prefix *mcp-default-name-prefix*) force timeout)
-  "拉取服务器工具清单并整体桥接为 CLH-TOOLS:TOOL 列表。
+  "拉取服务器工具清单并整体桥接为 CHARIOT-TOOLS:TOOL 列表。
 NAME-PREFIX 用于工具名前缀(默认 \"mcp\",见 MCP-BRIDGED-NAME);
 FORCE/TIMEOUT 透传给 LIST-TOOLS(缓存与超时语义同彼处)。
 要求客户端已完成 INITIALIZE。"

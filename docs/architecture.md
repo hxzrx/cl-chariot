@@ -1,33 +1,33 @@
 # 架构文档(Architecture)
 
-本文说明 CL-Harness 的分层设计、关键决策与扩展接缝。
+本文说明 CL-Chariot 的分层设计、关键决策与扩展接缝。
 
 ## 1. 总体形态:库为核心,CLI 为薄壳
 
-CL-Harness 有两种消费方式,**共享同一条事件流**:
+CL-Chariot 有两种消费方式,**共享同一条事件流**:
 
 ```
 宿主程序 ──┐
-           ├──> cl-harness/agent (主循环) ──> cl-harness/llm ──> 模型 API
+           ├──> cl-chariot/agent (主循环) ──> cl-chariot/llm ──> 模型 API
 CLI ───────┘        │
-                    ├──> cl-harness/tools ──> 宿主机(文件/进程/网络)
-                    └──> cl-harness/mcp ──> MCP 服务器(stdio 子进程)
+                    ├──> cl-chariot/tools ──> 宿主机(文件/进程/网络)
+                    └──> cl-chariot/mcp ──> MCP 服务器(stdio 子进程)
 ```
 
-库层(`cl-harness/agent` 及以下)不依赖任何终端概念;CLI 只是事件流的
+库层(`cl-chariot/agent` 及以下)不依赖任何终端概念;CLI 只是事件流的
 一个渲染器。这保证了嵌入大型项目时,行为与 CLI 中所见完全一致。
 
 ## 2. 分层与依赖(自底向上,单向无环)
 
-### 2.1 `cl-harness/base` —— 纯数据层
+### 2.1 `cl-chariot/base` —— 纯数据层
 
-- `clh-util`:字符串、alist、标识符、CJK 感知的 token 估算、行级 diff。
-- `clh-json`:**自研严格 JSON 解析器**(RFC 8259)+ **纯函数编码器**。
+- `chariot-util`:字符串、alist、标识符、CJK 感知的 token 估算、行级 diff。
+- `chariot-json`:**自研严格 JSON 解析器**(RFC 8259)+ **纯函数编码器**。
   - 决策记录:最初基于 jsown,但其解析器存在两个致命缺陷——顶层裸数字触发
     内部错误、非法输入(`{'a':1}`、裸标识符)被静默接受。对 harness 而言,
     「吞掉协议错误」比「解析失败」危险得多,故换为自研实现;
   - 编码器自研的原因:jsown 把 NIL 编码为 `[]`,无法输出 JSON `null`。
-- `clh-msg`:消息模型。内部表示与 OpenAI 兼容 wire 格式**完全一致**
+- `chariot-msg`:消息模型。内部表示与 OpenAI 兼容 wire 格式**完全一致**
   (`:OBJ ("role" . "user") ...`,字符串键,snake_case),
   因此「解析结果 ⇄ 内部模型 ⇄ 请求体」零转换。
 
@@ -42,7 +42,7 @@ CLI ───────┘        │
 
 `:OBJ` 标签同时消除了「对象 alist vs 对象数组」的形状歧义。
 
-### 2.2 `cl-harness/llm` —— 模型接入层
+### 2.2 `cl-chariot/llm` —— 模型接入层
 
 - `make-provider`:厂商预设(DeepSeek/Qwen/GLM/OpenAI)+ 关键字覆盖,
   产出不可变配置对象。API Key 缺省回退环境变量。
@@ -56,7 +56,7 @@ CLI ───────┘        │
   (`acc-apply-delta` 返回新状态),最终组装为 wire 格式的 `tool_calls`。
 - 流式请求自动携带 `stream_options.include_usage`,保证拿到用量。
 
-### 2.3 `cl-harness/tools` —— 工具系统
+### 2.3 `cl-chariot/tools` —— 工具系统
 
 工具是不可变 struct:名称、描述、参数规约、只读标记、处理函数。
 `define-tool` 宏提供声明式写法;`tool-json-schema` 编译为标准 JSON Schema。
@@ -71,7 +71,7 @@ CLI ───────┘        │
   glob(`**/` 匹配零层或多层目录,按 mtime 倒序)、grep(正则、include 过滤、
   跳过二进制与 `.git` 等)、web-fetch(抓取 + 去标签正文)。
 
-### 2.4 `cl-harness/agent` —— 智能体核心
+### 2.4 `cl-chariot/agent` —— 智能体核心
 
 主循环状态以**值传递**推进(loop 局部变量),不修改智能体配置对象:
 
@@ -96,7 +96,7 @@ CLI ───────┘        │
 - **会话**:JSONL 追加写;加载容忍损坏行(崩溃尾部);`session-messages`
   还原出的消息序列可直接作为 `run` 的 `:messages` 续跑。
 
-### 2.5 `cl-harness/mcp` —— MCP 客户端(stdio)
+### 2.5 `cl-chariot/mcp` —— MCP 客户端(stdio)
 
 接入 Model Context Protocol 服务器(声明协议版本 2025-11-25,向下兼容),依赖
 base/tools/uiop/bordeaux-threads,**不引入 HTTP 客户端**:
@@ -119,7 +119,7 @@ base/tools/uiop/bordeaux-threads,**不引入 HTTP 客户端**:
 未做:HTTP 传输、sampling/roots/elicitation(未注册的服务端请求回 -32601)、
 resources/prompts 封装。详见 [mcp.md](mcp.md)。
 
-### 2.6 `cl-harness`(伞形)与 `cl-harness/cli`
+### 2.6 `cl-chariot`(伞形)与 `cl-chariot/cli`
 
 - 伞形包重新导出各层稳定 API,并提供 `make-subagent-tool`:
   把「受限工具集 + 独立上下文 + 轮数上限」的子智能体封装成一个普通工具,
@@ -146,8 +146,8 @@ resources/prompts 封装。详见 [mcp.md](mcp.md)。
 
 | 条件 | 语义 | 处置 |
 |---|---|---|
-| `clh-llm:api-key-missing` | 未配置密钥 | 向上传播(配置错误,调用方需感知) |
-| `clh-llm:api-error` | API 非 2xx(重试耗尽) | 向上传播;`api-error-status` / `api-error-body` 取详情 |
-| `clh-tools:tool-error` | 工具可预期失败 | 捕获,回喂模型 |
+| `chariot-llm:api-key-missing` | 未配置密钥 | 向上传播(配置错误,调用方需感知) |
+| `chariot-llm:api-error` | API 非 2xx(重试耗尽) | 向上传播;`api-error-status` / `api-error-body` 取详情 |
+| `chariot-tools:tool-error` | 工具可预期失败 | 捕获,回喂模型 |
 | 其他 error(工具内) | 程序缺陷 | 捕获为失败工具结果,运行不中断 |
-| `clh-json:json-parse-error` | 协议 JSON 非法 | 向上传播(模型输出非法 JSON 属于需观测的异常) |
+| `chariot-json:json-parse-error` | 协议 JSON 非法 | 向上传播(模型输出非法 JSON 属于需观测的异常) |

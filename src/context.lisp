@@ -1,4 +1,4 @@
-;;;; context.lisp —— CL-Harness 上下文管理
+;;;; context.lisp —— CL-Chariot 上下文管理
 ;;;;
 ;;;; 职责:token 估算(消息级)与超预算时的历史裁剪。
 ;;;; 裁剪策略(纯函数):
@@ -9,18 +9,18 @@
 ;;;;      (开头若是带工具调用的 assistant 是合法的:其结果必然跟在后面且同被保留)
 ;;;;   4. 有消息被裁剪时,在最前面补一条提示性 user 消息,让模型知道历史不完整。
 
-(in-package :clh-agent)
+(in-package :chariot-agent)
 
 (declaim (optimize (speed 1) (safety 3) (debug 3)))
 
 (defun estimate-message-tokens (message)
   "估算单条消息的 token 数:文本内容 + 工具调用参数,启发式计数。
 结果略高于真实值是期望行为(宁可早裁剪,不可超上下文)。"
-  (+ (clh-util:estimate-text-tokens (clh-msg:message-content message))
-     (clh-util:estimate-text-tokens (clh-msg:message-tool-call-id message))
-     (loop for call in (clh-msg:message-tool-calls message)
-           sum (+ (clh-util:estimate-text-tokens (clh-msg:tool-call-name call))
-                  (clh-util:estimate-text-tokens (clh-msg:tool-call-arguments call))))
+  (+ (chariot-util:estimate-text-tokens (chariot-msg:message-content message))
+     (chariot-util:estimate-text-tokens (chariot-msg:message-tool-call-id message))
+     (loop for call in (chariot-msg:message-tool-calls message)
+           sum (+ (chariot-util:estimate-text-tokens (chariot-msg:tool-call-name call))
+                  (chariot-util:estimate-text-tokens (chariot-msg:tool-call-arguments call))))
      ;; 每条消息的结构开销
      4))
 
@@ -33,14 +33,14 @@
   (let ((system '())
         (rest '()))
     (dolist (m messages)
-      (if (string= (clh-msg:message-role m) "system")
+      (if (string= (chariot-msg:message-role m) "system")
           (push m system)
           (push m rest)))
     (values (nreverse system) (nreverse rest))))
 
 (defun orphan-tool-p (message)
   "判断消息作为序列开头时是否构成孤儿 tool 形态(有结果、无调用)。"
-  (string= (clh-msg:message-role message) "tool"))
+  (string= (chariot-msg:message-role message) "tool"))
 
 (defun trim-messages-with-stats (messages budget)
   "把 MESSAGES 裁剪到 BUDGET(估算 token)以内,返回
@@ -72,7 +72,7 @@
                  (elided-tokens (- rest-tokens used))
                  (elided-messages (subseq rest 0 elided))
                  (hint (when (and (plusp elided) kept)
-                         (clh-msg:make-user-message
+                         (chariot-msg:make-user-message
                           (format nil "[系统提示:为控制上下文长度,已省略较早的 ~D 条消息(约 ~:D tokens)。以下是保留的最近部分。]"
                                   elided elided-tokens)))))
             (values
@@ -92,7 +92,7 @@
   "把摘要文本包进一条带统计前缀的 user 消息。这是合成消息——只进入
 发送副本,不占消息记录;「模型可见即已记录」由 :SUMMARIZE 事件镜像
 携带它来满足(见 SESSION-SUMMARY-MESSAGES)。"
-  (clh-msg:make-user-message
+  (chariot-msg:make-user-message
    (format nil "[系统提示:为控制上下文长度,较早的 ~D 条消息(约 ~:D tokens)已被折叠为以下摘要。]~%~%~A"
            elided elided-tokens summary-text)))
 

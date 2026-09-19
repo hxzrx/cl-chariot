@@ -1,12 +1,12 @@
-# MCP 客户端(cl-harness/mcp)
+# MCP 客户端(cl-chariot/mcp)
 
-CL-Harness 内置 **Model Context Protocol 客户端**,支持 **stdio** 与
+CL-Chariot 内置 **Model Context Protocol 客户端**,支持 **stdio** 与
 **Streamable HTTP** 两种标准传输,可以把任意 MCP 服务器暴露的 tools 无损
 接入智能体工具体系。协议版本:声明并支持 **2025-11-25**(握手协商,向下
 兼容接受 2025-06-18 / 2025-03-26 / 2024-11-05;基础子集 initialize/ping/
 tools 在这些版本上行为一致)。
 
-系统名:`cl-harness/mcp`;包:`clh-mcp`;依赖:base / tools / uiop /
+系统名:`cl-chariot/mcp`;包:`chariot-mcp`;依赖:base / tools / uiop /
 bordeaux-threads / flexi-streams / dexador(HTTP 传输复用项目既有依赖)。
 
 ---
@@ -14,28 +14,28 @@ bordeaux-threads / flexi-streams / dexador(HTTP 传输复用项目既有依赖)�
 ## 快速上手
 
 ```lisp
-(ql:quickload :cl-harness/mcp)
+(ql:quickload :cl-chariot/mcp)
 
 ;; 1. 启动 MCP 服务器子进程(字符串参数逐个传给服务器)
-(let ((client (clh-mcp:make-mcp-client "python3" "/path/to/server.py" :name "weather")))
+(let ((client (chariot-mcp:make-mcp-client "python3" "/path/to/server.py" :name "weather")))
   (unwind-protect
        (progn
          ;; 2. initialize 握手(版本协商 + 能力交换 + initialized 通知)
-         (clh-mcp:initialize client :timeout 30)
+         (chariot-mcp:initialize client :timeout 30)
 
-         ;; 3. 拉取工具并桥接为 CLH-TOOLS:TOOL(直接作为智能体工具使用)
-         (let ((tools (clh-mcp:mcp-tools-from-server client)))
-           (clh:run-prompt (clh-llm:make-provider :deepseek)
+         ;; 3. 拉取工具并桥接为 CHARIOT-TOOLS:TOOL(直接作为智能体工具使用)
+         (let ((tools (chariot-mcp:mcp-tools-from-server client)))
+           (chariot:run-prompt (chariot-llm:make-provider :deepseek)
                            "查一下北京的天气"
-                           :tools (append clh-tools:+builtin-tools+ tools)
+                           :tools (append chariot-tools:+builtin-tools+ tools)
                            :permission-mode :default)))
 
     ;; 4. 用完关闭(幂等)
-    (clh-mcp:close-mcp-client client)))
+    (chariot-mcp:close-mcp-client client)))
 ```
 
 Streamable HTTP(远程端点):把首行换为
-`(clh-mcp:make-mcp-http-client "https://cantos.cn/mcp" :api-key "<token>")`,
+`(chariot-mcp:make-mcp-http-client "https://cantos.cn/mcp" :api-key "<token>")`,
 其余调用完全一致。
 
 完整可运行示例(离线、零 API Key):`sbcl --script examples/mcp-demo.lisp`。
@@ -86,7 +86,7 @@ HTTP:按规范发送 HTTP DELETE 显式结束会话(尽力而为)。
 | `mcp-timeout` | 请求超时;超时前会尽力发送 `notifications/cancelled`(规范要求) |
 | `mcp-connection-error` | 进程启动失败、写入失败、服务器意外退出等;连接不可再用 |
 
-- 每个请求可单独带 `:timeout`(秒),默认 `clh-mcp:*mcp-default-timeout*`(30);
+- 每个请求可单独带 `:timeout`(秒),默认 `chariot-mcp:*mcp-default-timeout*`(30);
   客户端级默认可用 `:default-timeout n`(`make-mcp-client` /
   `make-mcp-http-client`)覆盖。
 - 服务器工具的业务失败(CallToolResult `isError:true`)在 `call-tool` 中以
@@ -98,7 +98,7 @@ HTTP:按规范发送 HTTP DELETE 显式结束会话(尽力而为)。
 - **命名**:`<前缀>__<服务器名>__<工具名>`(默认前缀 `mcp`,双下划线分隔,
   兼容各厂商 OpenAI 兼容接口的函数名字符集;服务器名规整为小写、非法字符
   转连字符,工具名原样保留)。可用 `:name-prefix` 自定义。
-- **Schema 零损失**:MCP 的 `inputSchema` 经 `clh-tools:make-tool*` 原样携带,
+- **Schema 零损失**:MCP 的 `inputSchema` 经 `chariot-tools:make-tool*` 原样携带,
   不做「JSON Schema ⇄ 参数规约」的有损双向转换;必填参数校验从 Schema 的
   `required` 数组推导。
 - **只读判定**:尊重 `annotations.readOnlyHint`;未标注时保守取 NIL(变更类,
@@ -112,9 +112,9 @@ HTTP:按规范发送 HTTP DELETE 显式结束会话(尽力而为)。
 
 - 真实 HTTPS 联调:仓库 `mcp/` 目录提供基于 FastMCP 的 **Streamable HTTP
   测试服务器**(部署示例 `https://cantos.cn/mcp`),含部署(systemd/nginx)
-  与鉴权文档;live 套件(`CLH_MCP_URL` / `CLH_MCP_TOKEN` 门控)以原生
+  与鉴权文档;live 套件(`CHARIOT_MCP_URL` / `CHARIOT_MCP_TOKEN` 门控)以原生
   HTTP 客户端直连验证,详见 `mcp/README.md`。
-- `clh-mcp:*mcp-spawn-fn*`:进程/流启动注入点,签名
+- `chariot-mcp:*mcp-spawn-fn*`:进程/流启动注入点,签名
   `(FN COMMAND ARGV) → (VALUES STDIN STDOUT STDERR PROCESS)`,测试可注入假流。
 - 测试套件 `tests/mcp-test.lisp`(stdio,160 项断言)与
   `tests/mcp-http-test.lisp`(HTTP,39 项断言):帧层纯函数、裸客户端分派
@@ -125,14 +125,14 @@ HTTP:按规范发送 HTTP DELETE 显式结束会话(尽力而为)。
 ## Streamable HTTP 传输
 
 ```lisp
-(let ((client (clh-mcp:make-mcp-http-client "https://cantos.cn/mcp"
+(let ((client (chariot-mcp:make-mcp-http-client "https://cantos.cn/mcp"
                                             :api-key "<token>")))
   (unwind-protect
        (progn
-         (clh-mcp:initialize client)
-         (let ((tools (clh-mcp:mcp-tools-from-server client)))
+         (chariot-mcp:initialize client)
+         (let ((tools (chariot-mcp:mcp-tools-from-server client)))
            ...))
-    (clh-mcp:close-mcp-client client)))
+    (chariot-mcp:close-mcp-client client)))
 ```
 
 实现要点(已对真实部署端点与离线假服务器双重验证):
@@ -152,7 +152,7 @@ HTTP:按规范发送 HTTP DELETE 显式结束会话(尽力而为)。
 命令行前端可零代码接入 MCP 服务器,桥接工具与内置工具同等参与审批与执行:
 
 ```bash
-bin/cl-harness --mcp "fs=npx+-y+@modelcontextprotocol/server-filesystem+/tmp" \
+bin/cl-chariot --mcp "fs=npx+-y+@modelcontextprotocol/server-filesystem+/tmp" \
                --mcp "cantos=@https://cantos.cn/mcp+<token>" \
                "整理 /tmp 下的大文件"
 ```

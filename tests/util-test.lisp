@@ -1,8 +1,8 @@
 ;;;; util-test.lisp —— 基础工具集测试
 
-(in-package :clh-test)
+(in-package :chariot-test)
 
-(def-suite util-suite :description "clh-util 基础工具集")
+(def-suite util-suite :description "chariot-util 基础工具集")
 (in-suite util-suite)
 
 ;;; ---------- 非加密散列 ----------

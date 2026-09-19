@@ -1,4 +1,4 @@
-;;;; json.lisp —— CL-Harness JSON 层
+;;;; json.lisp —— CL-Chariot JSON 层
 ;;;;
 ;;;; 职责:
 ;;;;   1. 解析:自研严格 JSON 解析器(RFC 8259 子集)。早期版本基于 jsown,
@@ -22,7 +22,7 @@
 ;;;;   NIL(原子位置)      => null;空表 () 编码为 null;数组用向量或非空列表
 ;;;;   string / number      => 原样;T => true;其余 keyword => 字符串
 
-(in-package :clh-json)
+(in-package :chariot-json)
 
 (declaim (optimize (speed 1) (safety 3) (debug 3)))
 
@@ -30,7 +30,7 @@
 (defconstant +json-false+ :false "JSON false 的内部表示。")
 (defconstant +json-true+ :true   "JSON true 的内部表示。")
 
-(defparameter *missing-marker* '%clh-json-missing%
+(defparameter *missing-marker* '%chariot-json-missing%
   "jref-path 内部哨兵,用于区分「键缺失」与合法的 :NULL 值。")
 
 ;;; ---------------------------------------------------------------------------

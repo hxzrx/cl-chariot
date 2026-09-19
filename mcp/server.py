@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""cl-harness 联调用 FastMCP 测试服务器(Streamable HTTP 传输)。
+"""cl-chariot 联调用 FastMCP 测试服务器(Streamable HTTP 传输)。
 
-目的:为 CL-Harness 的 MCP 客户端提供一个部署在真实 HTTPS 域名上的
+目的:为 CL-Chariot 的 MCP 客户端提供一个部署在真实 HTTPS 域名上的
 MCP 服务器,用于联调与验证 Streamable HTTP 传输。工具面与
 tests/fake-mcp-server.py(stdio 假服务器)刻意保持一致,将来 HTTP
 传输实现后,同一组断言可以同时跑在两种传输上。
@@ -129,8 +129,8 @@ def snapshot():
 # ---------------------------------------------------------------------------
 
 mcp = FastMCP(
-    name="cl-harness-test",
-    instructions="CL-Harness MCP 联调测试服务器:工具均为刻意简单的测试桩,"
+    name="cl-chariot-test",
+    instructions="CL-Chariot MCP 联调测试服务器:工具均为刻意简单的测试桩,"
     "用于验证握手、工具调用、超时、内容块与能力协商等客户端行为。",
 )
 # DNS 重绑定防护:校验 Host/Origin 头(防恶意网页借浏览器打内网端点)。
@@ -322,7 +322,7 @@ def main():
     import uvicorn
 
     app = BearerTokenMiddleware(mcp.streamable_http_app())
-    print(f"cl-harness-test MCP server: http://{MCP_HOST}:{MCP_PORT}{MCP_STREAM_PATH} "
+    print(f"cl-chariot-test MCP server: http://{MCP_HOST}:{MCP_PORT}{MCP_STREAM_PATH} "
           f"(auth={'on' if MCP_BEARER_TOKEN else 'OFF(仅限本机自测)'}, "
           f"allowed-hosts={','.join(MCP_ALLOWED_HOSTS)})")
     # 单 worker:有状态会话保存在进程内存,不能多进程分片

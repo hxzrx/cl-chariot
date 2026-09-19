@@ -1,7 +1,7 @@
-;;;; session.lisp —— CL-Harness 会话持久化
+;;;; session.lisp —— CL-Chariot 会话持久化
 ;;;;
 ;;;; 会话以 JSONL(JSON Lines)事件流形式落盘:每行一个 JSON 对象。
-;;;; 文件位置由调用方给定(一般形如 ~/.cl-harness/sessions/<id>.jsonl)。
+;;;; 文件位置由调用方给定(一般形如 ~/.cl-chariot/sessions/<id>.jsonl)。
 ;;;;
 ;;;; 记录形态(经 SESSION-LOGGER 写入的记录带单调序号 seq,便于审计与回放):
 ;;;;   (:OBJ ("seq" . n) ("ts" . 3xxxxxxxxx) ("kind" . "message") ("message" . <消息>))
@@ -23,7 +23,7 @@
 ;;;;   分叉  SESSION-FORK(前缀复制 + fork 标记记录,续写序号不回绕);
 ;;;;   不变量 SESSION-RECORDING-BREAK(「模型可见即已记录」的两方向校验)。
 
-(in-package :clh-agent)
+(in-package :chariot-agent)
 
 (declaim (optimize (speed 1) (safety 3) (debug 3)))
 
@@ -48,7 +48,7 @@ SEQ 单调递增;向既有文件追加时从已有记录数续起,崩溃或续�
         (let ((n 0))
           (loop for line = (read-line in nil nil)
                 while line
-                unless (clh-util:string-blank-p line) do (incf n))
+                unless (chariot-util:string-blank-p line) do (incf n))
           n))))
 
 (defun make-session-logger (path)
@@ -62,7 +62,7 @@ SEQ 单调递增;向既有文件追加时从已有记录数续起,崩溃或续�
 (defun session-append (path object)
   "把事件对象 OBJECT 追加写入 PATH 对应的 JSONL 文件(单行,自动建目录)。
 这是本层唯一的写副作用;调用方决定何时写。"
-  (let ((line (clh-json:encode-json object)))
+  (let ((line (chariot-json:encode-json object)))
     (with-open-file (out path
                          :direction :output
                          :if-exists :append
@@ -83,7 +83,7 @@ SEQ 单调递增;向既有文件追加时从已有记录数续起,崩溃或续�
 TARGET 为路径时退化为无序号形态(兼容直接以路径落盘的调用方式)。"
   (multiple-value-bind (path logger) (%session-target target)
     (let ((cells (jobj-alist object)))
-      (push (cons "ts" (clh-util:now-universal)) cells)
+      (push (cons "ts" (chariot-util:now-universal)) cells)
       (when logger
         (push (cons "seq" (incf (session-logger-seq logger))) cells))
       (let ((record (cons :obj cells)))
@@ -109,9 +109,9 @@ PROVIDER 提供 provider/model;CONFIG-CELLS(可选)为 CONFIG-DIGEST 返回的
   (session-record target
                   `(:obj ("kind" . "meta")
                          ("provider" . ,(string-downcase
-                                         (clh-util:ensure-string
-                                          (clh-llm:provider-name provider))))
-                         ("model" . ,(clh-llm:provider-model provider))
+                                         (chariot-util:ensure-string
+                                          (chariot-llm:provider-name provider))))
+                         ("model" . ,(chariot-llm:provider-model provider))
                          ,@config-cells)))
 
 (defun session-load (path)
@@ -125,26 +125,26 @@ PROVIDER 提供 provider/model;CONFIG-CELLS(可选)为 CONFIG-DIGEST 返回的
                              :external-format :utf-8)
       (loop for line = (read-line in nil nil)
             while line
-            do (let ((trimmed (clh-util:trim-whitespace line)))
-                 (unless (clh-util:string-blank-p trimmed)
-                   (handler-case (push (clh-json:parse-json trimmed) events)
+            do (let ((trimmed (chariot-util:trim-whitespace line)))
+                 (unless (chariot-util:string-blank-p trimmed)
+                   (handler-case (push (chariot-json:parse-json trimmed) events)
                      (error () (incf corrupt)))))))
     (values (nreverse events) corrupt)))
 
 (defun session-messages (events)
   "从事件流中提取全部消息,还原为可续跑的消息序列。"
   (loop for event in events
-        when (string= (clh-json:jref event "kind" "") "message")
-          collect (clh-json:jref event "message")))
+        when (string= (chariot-json:jref event "kind" "") "message")
+          collect (chariot-json:jref event "message")))
 
 (defun session-usage-total (events)
   "汇总事件流中的全部 usage 事件,返回总量对象。"
-  (let ((total (clh-llm:zero-usage)))
+  (let ((total (chariot-llm:zero-usage)))
     (dolist (event events total)
-      (when (string= (clh-json:jref event "kind" "") "usage")
-        (setf total (clh-llm:add-usage total
-                                       (clh-json:jref event "usage"
-                                                      (clh-llm:zero-usage))))))))
+      (when (string= (chariot-json:jref event "kind" "") "usage")
+        (setf total (chariot-llm:add-usage total
+                                       (chariot-json:jref event "usage"
+                                                      (chariot-llm:zero-usage))))))))
 
 ;;; ---------------------------------------------------------------------------
 ;;; 记录取值
@@ -159,11 +159,11 @@ PROVIDER 提供 provider/model;CONFIG-CELLS(可选)为 CONFIG-DIGEST 返回的
   "记录的业务种类(关键字):SESSION-LOGGER 写入的为 :message / :usage / :meta,
 事件镜像为 :run-start / :tool-call / :run-end 等,分叉标记为 :fork。
 无 kind 字段时返回 NIL。"
-  (%kind-keyword (clh-json:jref record "kind")))
+  (%kind-keyword (chariot-json:jref record "kind")))
 
 (defun session-record-seq (record)
   "记录的序号;经 SESSION-LOGGER 写入的记录才有(路径直写形态返回 NIL)。"
-  (clh-json:jref record "seq"))
+  (chariot-json:jref record "seq"))
 
 (defun session-max-seq (records)
   "记录中的最大序号;全部无序号或空列表时返回 0。"
@@ -180,10 +180,10 @@ PROVIDER 提供 provider/model;CONFIG-CELLS(可选)为 CONFIG-DIGEST 返回的
 分叉(SESSION-FORK)与事后审计都建立在它之上。
 无序号的记录(路径直写形态)不参与截取。"
   (loop for record in records
-        when (and (string= (clh-json:jref record "kind" "") "message")
+        when (and (string= (chariot-json:jref record "kind" "") "message")
                   (let ((s (session-record-seq record)))
                     (and s (<= s seq))))
-          collect (clh-json:jref record "message")))
+          collect (chariot-json:jref record "message")))
 
 (defun session-events (records &key kinds)
   "提取事件镜像记录,保持原顺序。缺省排除四类业务记录
@@ -207,7 +207,7 @@ PROVIDER 提供 provider/model;CONFIG-CELLS(可选)为 CONFIG-DIGEST 返回的
 已知事件种类无损还原(产物可直接重喂 :ON-EVENT 消费方);
 未知或业务记录降级为只含 :KIND 的 plist(镜像的前向兼容在此对称)。"
   (let ((kind (session-record-kind record))
-        (ref (lambda (key) (clh-json:jref record key))))
+        (ref (lambda (key) (chariot-json:jref record key))))
     (case kind
       (:run-start
        (list :kind :run-start :prompt (funcall ref "prompt")))
@@ -287,7 +287,7 @@ CONFIG-DIGEST 写入的全部字段);没有 meta 时返回 NIL。"
 
 (defun session-config-digest (records)
   "最近一次运行的整体配置指纹(config_digest 字符串);没有时返回 NIL。"
-  (clh-json:jref (session-meta records) "config_digest"))
+  (chariot-json:jref (session-meta records) "config_digest"))
 
 (defun session-stop-reason (records)
   "最近一次运行的停止原因(最后一条 run-end 镜像的 stop_reason 关键字):
@@ -296,7 +296,7 @@ CONFIG-DIGEST 写入的全部字段);没有 meta 时返回 NIL。"
   (let ((reason nil))
     (dolist (record records reason)
       (when (eq (session-record-kind record) :run-end)
-        (setf reason (%kind-keyword (clh-json:jref record "stop_reason")))))))
+        (setf reason (%kind-keyword (chariot-json:jref record "stop_reason")))))))
 
 ;;; ---------------------------------------------------------------------------
 ;;; 检索
@@ -320,9 +320,9 @@ CONFIG-DIGEST 写入的全部字段);没有 meta 时返回 NIL。"
                   (or (null max-seq) (and s (<= s max-seq))))))
          (role-ok (record)
            (or (null role)
-               (let ((message (clh-json:jref record "message")))
+               (let ((message (chariot-json:jref record "message")))
                  (and message
-                      (string= (clh-json:jref message "role" "")
+                      (string= (chariot-json:jref message "role" "")
                                (string-downcase (symbol-name role))))))))
     (remove-if-not
      (lambda (record)
@@ -330,13 +330,13 @@ CONFIG-DIGEST 写入的全部字段);没有 meta 时返回 NIL。"
             (or (null kinds)
                 (member (session-record-kind record) kinds :test #'eq))
             (or (null tool-name)
-                (string= (clh-json:jref record "tool_name" "") tool-name))
+                (string= (chariot-json:jref record "tool_name" "") tool-name))
             (or (not error-p-given)
-                (eq (%record-bool (clh-json:jref record "error_p" :null))
+                (eq (%record-bool (chariot-json:jref record "error_p" :null))
                     (and error-p t)))
             (or (null stop-reason)
                 (and (eq (session-record-kind record) :run-end)
-                     (eq (%kind-keyword (clh-json:jref record "stop_reason"))
+                     (eq (%kind-keyword (chariot-json:jref record "stop_reason"))
                          stop-reason)))
             (role-ok record)))
      records)))
@@ -345,7 +345,7 @@ CONFIG-DIGEST 写入的全部字段);没有 meta 时返回 NIL。"
   "递归收集 JSON 值中的全部字符串(对象取值、数组取元素),用于文本检索。"
   (typecase value
     (string (list value))
-    (cons (if (clh-json:json-object-p value)
+    (cons (if (chariot-json:json-object-p value)
               (loop for pair in (rest value)
                     append (%record-strings (cdr pair)))
               (loop for item in value
@@ -363,7 +363,7 @@ CHAR-EQUAL 折叠大小写(对 ASCII 生效);PATTERN 为空串时匹配一切记
   (let ((records (etypecase path-or-records
                    (string (session-load path-or-records))
                    (list path-or-records)))
-        (needle (clh-util:ensure-string pattern)))
+        (needle (chariot-util:ensure-string pattern)))
     (flet ((hit-p (record)
              (some (lambda (s)
                      (if case-insensitive
@@ -414,8 +414,8 @@ TARGET 已存在时追加而非覆盖。分叉后的 TARGET 可直接作为 RUN 
 不占用 message 记录——「已记录」的成员集合因此包含本列表。"
   (loop for record in records
         when (and (eq (session-record-kind record) :compact)
-                  (clh-json:jref record "hint"))
-          collect (clh-json:jref record "hint")))
+                  (chariot-json:jref record "hint"))
+          collect (chariot-json:jref record "hint")))
 
 (defun session-summary-messages (records)
   "全部 :summarize 镜像携带的摘要消息(保持原顺序;折叠失败的镜像
@@ -423,8 +423,8 @@ TARGET 已存在时追加而非覆盖。分叉后的 TARGET 可直接作为 RUN 
 (见 BUILD-SUMMARY-MESSAGE)——「已记录」的成员集合因此包含本列表。"
   (loop for record in records
         when (and (eq (session-record-kind record) :summarize)
-                  (clh-json:jref record "summary_message"))
-          collect (clh-json:jref record "summary_message")))
+                  (chariot-json:jref record "summary_message"))
+          collect (chariot-json:jref record "summary_message")))
 
 (defun session-recording-break (sent-turns records)
   "校验「模型可见即已记录」不变量:凡进入模型上下文的消息必有记录。
@@ -442,12 +442,12 @@ SENT-TURNS:每轮发送给模型的消息列表组成的列表(按轮次顺序;�
   (let* ((recorded (append (session-messages records)
                            (session-compact-hints records)
                            (session-summary-messages records)))
-         (recorded-codes (mapcar #'clh-json:encode-json recorded)))
+         (recorded-codes (mapcar #'chariot-json:encode-json recorded)))
     (loop for sent in sent-turns
           for turn from 1
           do (let ((bad (find-if
                          (lambda (message)
-                           (not (member (clh-json:encode-json message)
+                           (not (member (chariot-json:encode-json message)
                                         recorded-codes :test #'string=)))
                          sent)))
                (when bad

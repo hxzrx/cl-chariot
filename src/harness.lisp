@@ -1,18 +1,18 @@
-;;;; harness.lisp —— CL-Harness 伞形包
+;;;; harness.lisp —— CL-Chariot 伞形包
 ;;;;
 ;;;; 提供两块增值能力:
 ;;;;   1. 子智能体工具(SUBAGENT):把一个受限工具集的子智能体封装为可被主智能体
 ;;;;      调用的工具,用于「分而治之」——主智能体分派独立子任务,子智能体在
 ;;;;      独立上下文中完成并只返回最终文本,避免主上下文被中间过程淹没;
-;;;;   2. 统一导出:使用者只需 (ql:quickload :cl-harness) 与 (use-package :clh)
+;;;;   2. 统一导出:使用者只需 (ql:quickload :cl-chariot) 与 (use-package :chariot)
 ;;;;      即可获得完整 API。
 
-(in-package :clh)
+(in-package :chariot)
 
 (declaim (optimize (speed 1) (safety 3) (debug 3)))
 
 (defparameter +version+ "0.7.0"
-  "CL-Harness 版本号。")
+  "CL-Chariot 版本号。")
 
 (defun make-subagent-tool (provider
                            &key (tools '("read" "glob" "grep" "bash"))
@@ -42,9 +42,9 @@ ON-EVENT          事件透传回调(可选,主智能体可借此展示子任务
    :parameters '(("prompt" "string" "交给子智能体的完整子任务描述" :required))
    :handler
    (lambda (args)
-     (let ((prompt (clh-json:jref args "prompt")))
+     (let ((prompt (chariot-json:jref args "prompt")))
        (unless (and (stringp prompt) (plusp (length prompt)))
-         (error 'clh-tools:tool-error :message "缺少必填参数:prompt"))
+         (error 'chariot-tools:tool-error :message "缺少必填参数:prompt"))
        (let ((sub-agent (make-agent
                          :provider provider
                          :tools (tools-by-names +builtin-tools+ tools)

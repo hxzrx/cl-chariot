@@ -1,8 +1,8 @@
 ;;;; provider-test.lisp —— 模型接入层测试(全部离线:注入假 HTTP 传输)
 
-(in-package :clh-test)
+(in-package :chariot-test)
 
-(def-suite provider-suite :description "clh-llm Provider 层")
+(def-suite provider-suite :description "chariot-llm Provider 层")
 (in-suite provider-suite)
 
 ;;; ---------- Provider 配置 ----------
@@ -169,7 +169,7 @@
 
 (defmacro with-fake-http ((status body) &body calls)
   "把 *HTTP-POST-FN* 替换为返回固定响应的假传输。BODY 为字符串(响应正文)。"
-  `(let ((clh-llm::*http-post-fn*
+  `(let ((chariot-llm::*http-post-fn*
            (lambda (url headers body &key want-stream timeout)
              (declare (ignore url headers body want-stream timeout))
              (values ,status (make-string-input-stream ,body)))))
@@ -187,7 +187,7 @@
 
 (test chat-streaming-fake
   (let* ((sse (format nil "data: {\"choices\":[{\"delta\":{\"content\":\"你\"}}]}~%data: {\"choices\":[{\"delta\":{\"content\":\"好\"}}]}~%data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":2,\"total_tokens\":3}}~%data: [DONE]~%"))
-         (clh-llm::*http-post-fn*
+         (chariot-llm::*http-post-fn*
            (lambda (url headers body &key want-stream timeout)
              (declare (ignore url headers body want-stream timeout))
              (values 200 (make-string-input-stream sse))))
@@ -208,7 +208,7 @@
   ;; 注意:词法变量必须先绑定,再在嵌套 let 中绑定特殊变量,
   ;; 否则 SBCL 顶层编译会丢失闭包对词法变量的捕获。
   (let ((attempts 0))
-    (let ((clh-llm::*http-post-fn*
+    (let ((chariot-llm::*http-post-fn*
             (lambda (url headers body &key want-stream timeout)
               (declare (ignore url headers body want-stream timeout))
               (incf attempts)
@@ -226,7 +226,7 @@
 (test no-retry-on-400
   ;; 400 属于请求错误:不重试,直接信号 API-ERROR
   (let ((attempts 0))
-    (let ((clh-llm::*http-post-fn*
+    (let ((chariot-llm::*http-post-fn*
             (lambda (url headers body &key want-stream timeout)
               (declare (ignore url headers body want-stream timeout))
               (incf attempts)
@@ -239,12 +239,12 @@
 (test retry-on-transport-error
   ;; SSL 截断/连接重置等传输层错误同样走重试
   (let ((attempts 0))
-    (let ((clh-llm::*http-post-fn*
+    (let ((chariot-llm::*http-post-fn*
             (lambda (url headers body &key want-stream timeout)
               (declare (ignore url headers body want-stream timeout))
               (incf attempts)
               (if (< attempts 2)
-                  (error 'clh-llm:transport-error :message "ssl unexpected eof")
+                  (error 'chariot-llm:transport-error :message "ssl unexpected eof")
                   (values 200 (make-string-input-stream
                                "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"重试成功\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":1,\"total_tokens\":2}}"))))))
       (multiple-value-bind (msg usage)
@@ -256,7 +256,7 @@
 
 (test retry-exhausted-signals
   ;; 重试耗尽后 API-ERROR 逃逸,且带状态码
-  (let ((clh-llm::*http-post-fn*
+  (let ((chariot-llm::*http-post-fn*
           (lambda (url headers body &key want-stream timeout)
             (declare (ignore url headers body want-stream timeout))
             (values 500 (make-string-input-stream "boom")))))
@@ -278,7 +278,7 @@
 (test retry-on-empty-response-streaming
   ;; 前两次 2xx 但空回复,第三次正常:空回复与 429/5xx 同属瞬时故障参与退避重试
   (let ((attempts 0))
-    (let ((clh-llm::*http-post-fn*
+    (let ((chariot-llm::*http-post-fn*
             (lambda (url headers body &key want-stream timeout)
               (declare (ignore url headers body want-stream timeout))
               (incf attempts)
@@ -299,7 +299,7 @@
 (test retry-on-empty-response-blocking
   ;; 非流式路径同样把空回复当瞬时故障
   (let ((attempts 0))
-    (let ((clh-llm::*http-post-fn*
+    (let ((chariot-llm::*http-post-fn*
             (lambda (url headers body &key want-stream timeout)
               (declare (ignore url headers body want-stream timeout))
               (incf attempts)
@@ -316,7 +316,7 @@
 
 (test empty-response-exhausted-signals
   ;; 重试耗尽仍为空回复:EMPTY-RESPONSE-ERROR 从 chat 层逃逸
-  (let ((clh-llm::*http-post-fn*
+  (let ((chariot-llm::*http-post-fn*
           (lambda (url headers body &key want-stream timeout)
             (declare (ignore url headers body want-stream timeout))
             (values 200 (make-string-input-stream

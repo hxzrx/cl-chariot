@@ -30,7 +30,7 @@
 ;;;;     :element-type '(unsigned-byte 8) 起进程并显式包 UTF-8 flexi 流,
 ;;;;     保证 MCP 规范要求的 UTF-8 编解码与 locale 无关。
 
-(in-package :clh-mcp)
+(in-package :chariot-mcp)
 
 (declaim (optimize (speed 1) (safety 3) (debug 3)))
 
@@ -52,7 +52,7 @@ STDIN 为本客户端向服务器写入的字符流(子进程 stdin),STDOUT/STDE
 (defparameter *mcp-stderr-log-limit* 200
   "每客户端保留的 stderr 日志行数上限(最新的在最前,防内存膨胀)。")
 
-(defparameter +mcp-client-info-name+ "cl-harness"
+(defparameter +mcp-client-info-name+ "cl-chariot"
   "initialize 握手 clientInfo.name 的默认值。")
 
 (defparameter +mcp-client-info-version+ "0.3.0"
@@ -164,7 +164,7 @@ DIRECTION 仅用于文档意图说明)。若已是字符流则原样返回(注�
 (defun default-spawn (command argv)
   "*MCP-SPAWN-FN* 的默认实现:uiop:launch-program 以二进制流起子进程,
 再把三条流包装为显式 UTF-8 字符流。命令不存在等启动失败信号
-CLH-MCP:MCP-CONNECTION-ERROR。"
+CHARIOT-MCP:MCP-CONNECTION-ERROR。"
   (let ((process (uiop:launch-program (cons command argv)
                                       :input :stream :output :stream
                                       :error-output :stream
@@ -251,7 +251,7 @@ COMMAND 为可执行程序;ARGS 中位于关键字之前、连续的字符串参
           (finish-output (mcp-client-stdin client))
           t)
       (error (e)
-        (format *error-output* "~&[cl-harness] MCP 写入失败:~A~%" e)
+        (format *error-output* "~&[cl-chariot] MCP 写入失败:~A~%" e)
         nil))))
 
 (defun %send-obj (client obj)
@@ -444,7 +444,7 @@ id 注册先于写入:响应可能在写入返回前到达,注册表必须先行
     (when hook
       (handler-case (funcall hook method params)
         (error (e)
-          (format *error-output* "~&[cl-harness] MCP 通知回调异常(已忽略):~A~%" e))))))
+          (format *error-output* "~&[cl-chariot] MCP 通知回调异常(已忽略):~A~%" e))))))
 
 (defun %handle-line (client line)
   "处理一行入站文本:解析 → 分类 → 分派。解析失败计入 MALFORMED-COUNT
@@ -462,7 +462,7 @@ id 注册先于写入:响应可能在写入返回前到达,注册表必须先行
     (error (e)
       (bt:with-lock-held ((mcp-client-lock client))
         (incf (mcp-client-malformed-count client)))
-      (format *error-output* "~&[cl-harness] MCP 入站行处理失败(已忽略):~A~%" e))))
+      (format *error-output* "~&[cl-chariot] MCP 入站行处理失败(已忽略):~A~%" e))))
 
 (defun %reader-loop (client)
   "读取线程主循环:逐行读 stdout → 分派;EOF 或流错误时标记连接已断,
@@ -470,8 +470,8 @@ id 注册先于写入:响应可能在写入返回前到达,注册表必须先行
   (handler-case
       (loop for line = (read-line (mcp-client-stdout client) nil :eof)
             until (eq line :eof)
-            unless (clh-util:string-blank-p line)
-              do (%handle-line client (clh-util:trim-whitespace line)))
+            unless (chariot-util:string-blank-p line)
+              do (%handle-line client (chariot-util:trim-whitespace line)))
     (error () nil))
   (%mark-dead client))
 
@@ -492,7 +492,7 @@ id 注册先于写入:响应可能在写入返回前到达,注册表必须先行
       (loop for line = (read-line (mcp-client-stderr client) nil :eof)
             until (eq line :eof)
             do (bt:with-lock-held ((mcp-client-lock client))
-                 (push (clh-util:trim-whitespace line)
+                 (push (chariot-util:trim-whitespace line)
                        (mcp-client-stderr-log client))
                  (when (> (length (mcp-client-stderr-log client))
                           *mcp-stderr-log-limit*)

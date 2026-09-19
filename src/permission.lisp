@@ -1,4 +1,4 @@
-;;;; permission.lisp —— CL-Harness 审批策略
+;;;; permission.lisp —— CL-Chariot 审批策略
 ;;;;
 ;;;; 审批(Permission)决定「工具调用是否允许执行」,与工具定义、沙箱正交。
 ;;;;
@@ -10,7 +10,7 @@
 ;;;; ALLOWED/DISALLOWED 工具名名单优先于模式(DISALLOWED 永远获胜)。
 ;;;; 决策函数 DECIDE-PERMISSION 是纯函数:模式、名单、回调作为参数显式传入。
 
-(in-package :clh-agent)
+(in-package :chariot-agent)
 
 (declaim (optimize (speed 1) (safety 3) (debug 3)))
 

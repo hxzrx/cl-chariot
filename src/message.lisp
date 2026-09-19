@@ -1,4 +1,4 @@
-;;;; message.lisp —— CL-Harness 消息模型
+;;;; message.lisp —— CL-Chariot 消息模型
 ;;;;
 ;;;; 消息与内容块统一采用与 OpenAI 兼容 wire 协议一致的内部表示:
 ;;;;   消息     => (:OBJ ("role" . "user") ("content" . "...") ...)
@@ -11,7 +11,7 @@
 ;;;;
 ;;;; 本包所有函数均为纯函数:构造返回新数据,访问不产生副作用。
 
-(in-package :clh-msg)
+(in-package :chariot-msg)
 
 (declaim (optimize (speed 1) (safety 3) (debug 3)))
 

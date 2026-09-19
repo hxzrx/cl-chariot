@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """fake-mcp-http-server.py —— 假 MCP 服务器(Streamable HTTP 传输),纯标准库。
 
-用途:为 CL-Harness 的 MCP HTTP 客户端提供**离线**测试目标(无外网、
+用途:为 CL-Chariot 的 MCP HTTP 客户端提供**离线**测试目标(无外网、
 无第三方依赖)。与 tests/fake-mcp-server.py(stdio)工具面对齐。
 
 行为要点(对照 MCP 2025-06-18 Streamable HTTP 规范):

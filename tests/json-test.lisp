@@ -1,8 +1,8 @@
 ;;;; json-test.lisp —— JSON 层测试
 
-(in-package :clh-test)
+(in-package :chariot-test)
 
-(def-suite json-suite :description "clh-json 编解码")
+(def-suite json-suite :description "chariot-json 编解码")
 (in-suite json-suite)
 
 ;;; ---------- 解析 ----------

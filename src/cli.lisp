@@ -1,15 +1,15 @@
-;;;; cli.lisp —— CL-Harness 命令行前端
+;;;; cli.lisp —— CL-Chariot 命令行前端
 ;;;;
 ;;;; 两种用法:
-;;;;   一次性执行:  clh [选项] "提示词"     —— 运行完即退出,适合脚本与 CI;
-;;;;   交互式 REPL:  clh [选项]              —— 多轮对话,支持斜杠命令。
+;;;;   一次性执行:  chariot [选项] "提示词"     —— 运行完即退出,适合脚本与 CI;
+;;;;   交互式 REPL:  chariot [选项]              —— 多轮对话,支持斜杠命令。
 ;;;;
 ;;;; REPL 斜杠命令:/help /quit /tools /model /provider /usage /clear /system
 ;;;;
 ;;;; 输出流式打印模型增量;工具调用与结果以简洁行展示。
 ;;;; CLI 是库的薄封装:会话状态仅在 CLI 层,库层保持纯净。
 
-(in-package :clh-cli)
+(in-package :chariot-cli)
 
 (declaim (optimize (speed 1) (safety 3) (debug 3)))
 
@@ -37,9 +37,9 @@
 ;;; ---------------------------------------------------------------------------
 
 (defparameter *usage-text*
-  "CL-Harness —— Common Lisp 智能体驾驭框架
+  "CL-Chariot —— Common Lisp 智能体驾驭框架
 
-用法: clh [选项] [提示词]
+用法: chariot [选项] [提示词]
   不给提示词则进入交互式 REPL。
 
 选项:
@@ -127,7 +127,7 @@ REPL 斜杠命令:
                   (usage-error (format nil "未知选项:~A" arg)))
                  (t (push arg positional)))
             finally (setf (getf opts :prompt)
-                          (clh-util:join-string (reverse positional) " "))))
+                          (chariot-util:join-string (reverse positional) " "))))
     opts))
 (defun parse-integer-safe (string)
   "宽松解析整数,失败报用法错误。"
@@ -163,16 +163,16 @@ REPL 斜杠命令:
          (format stream "~A~%"
                  (cyan (format nil "▸ 工具调用 ~A ~A"
                                (getf event :tool-name)
-                               (clh-util:clamp-string (getf event :arguments) 120)))))
+                               (chariot-util:clamp-string (getf event :arguments) 120)))))
         (:tool-result
          (format stream "~A~%"
                  (if (getf event :error-p)
                      (red (format nil "  ✗ 失败(~A):~A"
                                   (getf event :duration)
-                                  (clh-util:clamp-string (getf event :result) 200)))
+                                  (chariot-util:clamp-string (getf event :result) 200)))
                      (green (format nil "  ✓ 完成(~A) ~A"
                                     (getf event :duration)
-                                    (clh-util:clamp-string (getf event :result) 200))))))
+                                    (chariot-util:clamp-string (getf event :result) 200))))))
         (:permission-denied
          (format stream "~A~%"
                  (red (format nil "  ⨯ 权限拒绝:~A" (getf event :reason)))))
@@ -197,9 +197,9 @@ REPL 斜杠命令:
            (format stream "~A~%"
                    (dim (format nil "[共 ~A 轮 | tokens: 输入 ~A + 输出 ~A = ~A]"
                                 turns
-                                (clh-llm:usage-prompt-tokens usage)
-                                (clh-llm:usage-completion-tokens usage)
-                                (clh-llm:usage-total-tokens usage))))))
+                                (chariot-llm:usage-prompt-tokens usage)
+                                (chariot-llm:usage-completion-tokens usage)
+                                (chariot-llm:usage-total-tokens usage))))))
         (t nil)))))
 
 ;;; ---------------------------------------------------------------------------
@@ -219,7 +219,7 @@ REPL 斜杠命令:
             (rest (subseq spec (1+ eq))))
         (when (find #\space name) (fail "NAME 不能含空白"))
         (when (string= rest "") (fail "缺少服务器描述"))
-        (let ((parts (clh-util:split-string rest :delimiter #\+ :omit-blanks nil)))
+        (let ((parts (chariot-util:split-string rest :delimiter #\+ :omit-blanks nil)))
           (if (char= (char rest 0) #\@)
               (progn
                 (unless (<= 1 (length parts) 2)
@@ -252,17 +252,17 @@ REPL 斜杠命令:
               (setf client (ecase (getf parsed :kind)
                              ;; 关键:make-mcp-client 约定「位于关键字之前的连续
                              ;; 字符串参数」才是服务器 argv,故 :name 必须在其后
-                             (:stdio (apply #'clh-mcp:make-mcp-client
+                             (:stdio (apply #'chariot-mcp:make-mcp-client
                                             (getf parsed :command)
                                             (append (getf parsed :argv)
                                                     (list :name (getf parsed :name)))))
-                             (:http (apply #'clh-mcp:make-mcp-http-client
+                             (:http (apply #'chariot-mcp:make-mcp-http-client
                                            (getf parsed :url)
                                            :name (getf parsed :name)
                                            (when (getf parsed :api-key)
                                              (list :api-key (getf parsed :api-key)))))))
-              (clh-mcp:initialize client :timeout 30)
-              (let ((bridged (clh-mcp:mcp-tools-from-server client :timeout 60)))
+              (chariot-mcp:initialize client :timeout 30)
+              (let ((bridged (chariot-mcp:mcp-tools-from-server client :timeout 60)))
                 (push client clients)
                 (setf tools (append tools bridged))
                 (format t "~A~%"
@@ -270,7 +270,7 @@ REPL 斜杠命令:
                                        (getf parsed :name) (length bridged))))))
           (error (e)
             (when client
-              (ignore-errors (clh-mcp:close-mcp-client client)))
+              (ignore-errors (chariot-mcp:close-mcp-client client)))
             (format *error-output* "~A~%"
                     (red (format nil "⚠ MCP[~A] 启动失败,已跳过:~A"
                                  (if parsed (getf parsed :name) spec) e)))))))))
@@ -278,7 +278,7 @@ REPL 斜杠命令:
 (defun shutdown-mcp-servers (clients)
   "关闭 start-mcp-servers 返回的全部客户端(尽力而为,忽略错误)。"
   (dolist (client clients)
-    (ignore-errors (clh-mcp:close-mcp-client client)))
+    (ignore-errors (chariot-mcp:close-mcp-client client)))
   (values))
 
 ;;; ---------------------------------------------------------------------------
@@ -289,17 +289,17 @@ REPL 斜杠命令:
   "按 SPEC(逗号分隔的工具名白名单)筛选 ALL-TOOLS;顺序保持 ALL-TOOLS 原序。
 SPEC 为 NIL/空白时返回全部;存在未知名字时信号错误——拼写错误应当即暴露,
 而不是让工具静默缺席。"
-  (if (clh-util:string-blank-p spec)
+  (if (chariot-util:string-blank-p spec)
       all-tools
-      (let* ((names (clh-util:split-string spec :delimiter #\,))
+      (let* ((names (chariot-util:split-string spec :delimiter #\,))
              (picked (remove-if-not
                       (lambda (tool)
-                        (member (clh-tools:tool-name tool) names :test #'string=))
+                        (member (chariot-tools:tool-name tool) names :test #'string=))
                       all-tools)))
         (dolist (n names)
-          (unless (find n picked :key #'clh-tools:tool-name :test #'string=)
+          (unless (find n picked :key #'chariot-tools:tool-name :test #'string=)
             (error "未知的工具:~A(可用:~{~A~^, ~})"
-                   n (mapcar #'clh-tools:tool-name all-tools))))
+                   n (mapcar #'chariot-tools:tool-name all-tools))))
         picked)))
 
 (defun opts->agent-args (opts &key mcp-tools)
@@ -307,13 +307,13 @@ SPEC 为 NIL/空白时返回全部;存在未知名字时信号错误——拼写
 注意:仅当选项有值时才传给 MAKE-PROVIDER——显式传 NIL 会遮蔽预设默认值
 与环境变量回退(这是关键字参数 SUPPLIED-P 语义的必然结果)。"
   (let* ((provider-args (list (getf opts :provider :deepseek)))
-         (provider (apply #'clh-llm:make-provider
+         (provider (apply #'chariot-llm:make-provider
                           (append provider-args
                                   (when (getf opts :api-key) (list :api-key (getf opts :api-key)))
                                   (when (getf opts :model) (list :model (getf opts :model)))
                                   (when (getf opts :base-url) (list :base-url (getf opts :base-url)))))))
     (list :provider provider
-          :tools (select-tools (append clh-tools:+builtin-tools+ mcp-tools)
+          :tools (select-tools (append chariot-tools:+builtin-tools+ mcp-tools)
                                (getf opts :tools))
           :system-prompt (getf opts :system)
           :max-turns (or (getf opts :max-turns) 40)
@@ -328,16 +328,16 @@ SPEC 为 NIL/空白时返回全部;存在未知名字时信号错误——拼写
   (multiple-value-bind (mcp-clients mcp-tools)
       (start-mcp-servers (getf opts :mcp-specs))
     (unwind-protect
-         (let ((agent (apply #'clh-agent:make-agent
+         (let ((agent (apply #'chariot-agent:make-agent
                              (opts->agent-args opts :mcp-tools mcp-tools))))
            (handler-case
-               (let ((result (clh-agent:run agent (getf opts :prompt))))
+               (let ((result (chariot-agent:run agent (getf opts :prompt))))
                  (declare (ignore result))
                  0)
-             (clh-llm:api-key-missing (e)
+             (chariot-llm:api-key-missing (e)
                (format *error-output* "~A~%" e)
                2)
-             (clh-llm:api-error (e)
+             (chariot-llm:api-error (e)
                (format *error-output* "API 错误:~A~%" e)
                3)
              (error (e)
@@ -352,12 +352,12 @@ SPEC 为 NIL/空白时返回全部;存在未知名字时信号错误——拼写
 (defun print-banner (provider &optional (mcp-tool-count 0))
   "打印欢迎横幅。MCP-TOOL-COUNT 非 0 时附加 MCP 概览行。"
   (format t "~A v~A~%"
-          (cyan "CL-Harness") +cli-version+)
+          (cyan "CL-Chariot") +cli-version+)
   (format t "~A~%"
           (dim (format nil "provider:~A model:~A 工具:~{~A~^,~}"
-                       (clh-llm:provider-name provider)
-                       (clh-llm:provider-model provider)
-                       (clh-tools:builtin-tool-names))))
+                       (chariot-llm:provider-name provider)
+                       (chariot-llm:provider-model provider)
+                       (chariot-tools:builtin-tool-names))))
   (when (plusp mcp-tool-count)
     (format t "~A~%"
             (dim (format nil "MCP 桥接工具:~D 个(/mcp 查看服务器,/tools 查看全部)"
@@ -385,7 +385,7 @@ SPEC 为 NIL/空白时返回全部;存在未知名字时信号错误——拼写
       (let ((line (read-line nil nil nil)))
         (cond
           ((null line) (return))                        ; EOF (Ctrl+D)
-          ((clh-util:string-blank-p line))              ; 空行忽略
+          ((chariot-util:string-blank-p line))              ; 空行忽略
           ((char= (char line 0) #\/)
            (handle-slash-command line
                                  :provider-ref (lambda (&optional new) (when new (setf provider new)) provider)
@@ -400,19 +400,19 @@ SPEC 为 NIL/空白时返回全部;存在未知名字时信号错误——拼写
                (let* ((args (opts->agent-args opts :mcp-tools mcp-tools)))
                  (setf (getf args :provider) provider
                        (getf args :system-prompt) system-prompt)
-                 (let* ((agent (apply #'clh-agent:make-agent args))
-                        (result (clh-agent:run agent line
+                 (let* ((agent (apply #'chariot-agent:make-agent args))
+                        (result (chariot-agent:run agent line
                                                :messages
                                                (if conversation
                                                    conversation
                                                    nil))))
-                   (setf conversation (clh-agent:result-messages result)
-                         last-usage (clh-agent:result-usage result))
+                   (setf conversation (chariot-agent:result-messages result)
+                         last-usage (chariot-agent:result-usage result))
                    (unless (getf opts :stream t)
                      ;; 非流式时结果由这里打印
-                     (format t "~A~%" (or (clh-agent:result-text result) "(无文本输出)")))))
-             (clh-llm:api-key-missing (e) (format t "~A~%" (red (princ-to-string e))))
-             (clh-llm:api-error (e) (format t "~A~%" (red (format nil "API 错误:~A" e))))
+                     (format t "~A~%" (or (chariot-agent:result-text result) "(无文本输出)")))))
+             (chariot-llm:api-key-missing (e) (format t "~A~%" (red (princ-to-string e))))
+             (chariot-llm:api-error (e) (format t "~A~%" (red (format nil "API 错误:~A" e))))
              (error (e) (format t "~A~%" (red (format nil "错误:~A" e)))))))))))
       (shutdown-mcp-servers mcp-clients)))
 
@@ -420,10 +420,10 @@ SPEC 为 NIL/空白时返回全部;存在未知名字时信号错误——拼写
   "处理 REPL 斜杠命令。*_REF 参数是带可选新值的读写闭包,保持状态局部化;
 MCP-REF 为无参闭包,返回 (VALUES MCP-CLIENTS MCP-TOOLS) 供 /tools 与 /mcp 展示;
 QUIT-REF 为置位退出标志的闭包(/quit 经它优雅退出,确保 MCP 服务器被清理)。"
-  (let* ((trimmed (clh-util:trim-whitespace line))
-         (parts (clh-util:split-string trimmed :delimiter #\space))
+  (let* ((trimmed (chariot-util:trim-whitespace line))
+         (parts (chariot-util:split-string trimmed :delimiter #\space))
          (cmd (first parts))
-         (rest-args (clh-util:join-string (rest parts) " ")))
+         (rest-args (chariot-util:join-string (rest parts) " ")))
     (cond
       ((member cmd '("/help" "/?") :test #'string=)
        (format t "~A~%" (dim "命令:/quit 退出 /tools 工具列表 /mcp MCP 服务器状态
@@ -433,11 +433,11 @@ QUIT-REF 为置位退出标志的闭包(/quit 经它优雅退出,确保 MCP 服�
       ((string= cmd "/tools")
        (multiple-value-bind (clients mcp-tools) (funcall mcp-ref)
          (declare (ignore clients))
-         (format t "内置工具:~{~A~^, ~}~%" (clh-tools:builtin-tool-names))
+         (format t "内置工具:~{~A~^, ~}~%" (chariot-tools:builtin-tool-names))
          (when mcp-tools
            (format t "MCP 工具(~D):~{~A~^, ~}~%"
                    (length mcp-tools)
-                   (mapcar #'clh-tools:tool-name mcp-tools)))))
+                   (mapcar #'chariot-tools:tool-name mcp-tools)))))
       ((string= cmd "/mcp")
        (multiple-value-bind (clients mcp-tools) (funcall mcp-ref)
          (if clients
@@ -446,39 +446,39 @@ QUIT-REF 为置位退出标志的闭包(/quit 经它优雅退出,确保 MCP 服�
                        (length clients) (length mcp-tools))
                (dolist (c clients)
                  (format t "  ~A  传输:~A  协议:~A~%"
-                         (clh-mcp:mcp-client-name c)
-                         (clh-mcp:mcp-client-transport c)
-                         (or (clh-mcp:mcp-client-negotiated-version c)
+                         (chariot-mcp:mcp-client-name c)
+                         (chariot-mcp:mcp-client-transport c)
+                         (or (chariot-mcp:mcp-client-negotiated-version c)
                              "(未握手)"))))
              (format t "(未接入 MCP 服务器;启动时用 --mcp NAME=CMD 或 NAME=@URL 接入)~%"))))
       ((string= cmd "/provider")
-       (if (clh-util:string-blank-p rest-args)
-           (format t "当前 provider:~A~%" (clh-llm:provider-name (provider-ref)))
+       (if (chariot-util:string-blank-p rest-args)
+           (format t "当前 provider:~A~%" (chariot-llm:provider-name (provider-ref)))
            (progn
              (funcall provider-ref
-                      (clh-llm:make-provider (intern (string-upcase rest-args) :keyword)))
+                      (chariot-llm:make-provider (intern (string-upcase rest-args) :keyword)))
              (format t "已切换 provider:~A~%"
-                     (clh-llm:provider-name (provider-ref))))))
+                     (chariot-llm:provider-name (provider-ref))))))
       ((string= cmd "/model")
-       (if (clh-util:string-blank-p rest-args)
-           (format t "当前 model:~A~%" (clh-llm:provider-model (provider-ref)))
+       (if (chariot-util:string-blank-p rest-args)
+           (format t "当前 model:~A~%" (chariot-llm:provider-model (provider-ref)))
            (progn
              (funcall provider-ref
-                      (clh-llm:copy-provider (provider-ref) :model rest-args))
-             (format t "已切换 model:~A~%" (clh-llm:provider-model (provider-ref))))))
+                      (chariot-llm:copy-provider (provider-ref) :model rest-args))
+             (format t "已切换 model:~A~%" (chariot-llm:provider-model (provider-ref))))))
       ((string= cmd "/usage")
        (let ((u (funcall usage-ref)))
          (if u
              (format t "上次运行 tokens:输入 ~A,输出 ~A,合计 ~A~%"
-                     (clh-llm:usage-prompt-tokens u)
-                     (clh-llm:usage-completion-tokens u)
-                     (clh-llm:usage-total-tokens u))
+                     (chariot-llm:usage-prompt-tokens u)
+                     (chariot-llm:usage-completion-tokens u)
+                     (chariot-llm:usage-total-tokens u))
              (format t "(尚无用量记录)~%"))))
       ((string= cmd "/clear")
        (funcall conversation-ref '())
        (format t "对话已清空。~%"))
       ((string= cmd "/system")
-       (funcall system-ref (if (clh-util:string-blank-p rest-args) nil rest-args))
+       (funcall system-ref (if (chariot-util:string-blank-p rest-args) nil rest-args))
        (format t "系统提示词已更新。~%"))
       (t (format t "未知命令:~A(/help 查看帮助)~%" cmd)))))
 
@@ -487,11 +487,11 @@ QUIT-REF 为置位退出标志的闭包(/quit 经它优雅退出,确保 MCP 服�
 ;;; ---------------------------------------------------------------------------
 
 (defun argv-from-env ()
-  "从环境变量 CLH_ARGV 还原命令行参数(参数间以 ASCII 0x1F 分隔)。
-bin/cl-harness 外壳脚本用它在 --eval 调用方式下透传 shell 参数。"
-  (let ((raw (uiop:getenv "CLH_ARGV")))
+  "从环境变量 CHARIOT_ARGV 还原命令行参数(参数间以 ASCII 0x1F 分隔)。
+bin/cl-chariot 外壳脚本用它在 --eval 调用方式下透传 shell 参数。"
+  (let ((raw (uiop:getenv "CHARIOT_ARGV")))
     (if (and raw (plusp (length raw)))
-        (clh-util:split-string raw :delimiter (code-char 31) :omit-blanks nil)
+        (chariot-util:split-string raw :delimiter (code-char 31) :omit-blanks nil)
         nil)))
 
 (defun main (&optional (argv (or (uiop:command-line-arguments) (argv-from-env))))
@@ -503,13 +503,13 @@ bin/cl-harness 外壳脚本用它在 --eval 调用方式下透传 shell 参数�
       ((getf opts :help)
        (write-string *usage-text*) 0)
       ((getf opts :version)
-       (format t "clh ~A~%" +cli-version+) 0)
+       (format t "chariot ~A~%" +cli-version+) 0)
       ((getf opts :list-providers)
-       (dolist (name (clh-llm:provider-preset-names))
+       (dolist (name (chariot-llm:provider-preset-names))
          (format t "~A~10T默认模型:~A~%"
-                 name (clh-llm:provider-default-model name)))
+                 name (chariot-llm:provider-default-model name)))
        0)
-      ((clh-util:string-blank-p (getf opts :prompt))
+      ((chariot-util:string-blank-p (getf opts :prompt))
        (run-repl opts))
       (t
        (run-oneshot opts)))))

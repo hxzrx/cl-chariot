@@ -1,4 +1,4 @@
-# CL-Harness 忽略清单
+# CL-Chariot 忽略清单
 *.fasl
 *.dfsl
 *.lx64fsl

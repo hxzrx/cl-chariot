@@ -1,8 +1,8 @@
 ;;;; agent-test.lisp —— 智能体主循环测试(脚本化假模型,零网络)
 
-(in-package :clh-test)
+(in-package :chariot-test)
 
-(def-suite agent-suite :description "clh-agent 主循环/上下文/审批")
+(def-suite agent-suite :description "chariot-agent 主循环/上下文/审批")
 (in-suite agent-suite)
 
 ;;; ---------- 假模型基础设施 ----------

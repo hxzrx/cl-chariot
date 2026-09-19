@@ -1,4 +1,4 @@
-# demo/ —— CL-Harness 完整示例
+# demo/ —— CL-Chariot 完整示例
 
 三个渐进式示例,展示从「一次流式对话」到「驾驭多轮工具循环的项目分析智能体」:
 
@@ -18,14 +18,14 @@ export DEEPSEEK_API_KEY=sk-...
 demo/run.sh
 
 # 换厂商 / 换模型 / 换分析目标
-CLH_PROVIDER=qwen  CLH_MODEL=qwen-max  demo/run.sh
-CLH_PROVIDER=glm                        demo/run.sh
-CLH_ANALYZE_TARGET=$HOME/other-project  demo/run.sh
+CHARIOT_PROVIDER=qwen  CHARIOT_MODEL=qwen-max  demo/run.sh
+CHARIOT_PROVIDER=glm                        demo/run.sh
+CHARIOT_ANALYZE_TARGET=$HOME/other-project  demo/run.sh
 
 # 也可以只跑某个示例
 sbcl --noinform --non-interactive \
-     --eval '(progn (require :asdf) (load "~/quicklisp/setup.lisp") (asdf:load-system :cl-harness/demo))' \
-     --eval '(clh-demo:example-chat)'
+     --eval '(progn (require :asdf) (load "~/quicklisp/setup.lisp") (asdf:load-system :cl-chariot/demo))' \
+     --eval '(chariot-demo:example-chat)'
 ```
 
 前置条件:本仓库已注册到 ASDF source-registry,且 Quicklisp 可用。

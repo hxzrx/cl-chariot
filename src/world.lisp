@@ -1,4 +1,4 @@
-;;;; world.lisp —— CL-Harness 执行世界(Execution World)
+;;;; world.lisp —— CL-Chariot 执行世界(Execution World)
 ;;;;
 ;;;; 内置工具的全部「外部世界访问」——进程执行、文件读写、目录枚举、
 ;;;; 内容搜索、网络抓取——统一经由执行世界进行。seam 三角色:
@@ -12,7 +12,7 @@
 ;;;; 本文件同时承载本机实现:从 tools-builtin 移入的进程/文件系统原语,
 ;;;; 行为与搬移前完全一致(离线全量断言作证)。
 
-(in-package :clh-tools)
+(in-package :chariot-tools)
 
 (declaim (optimize (speed 1) (safety 3) (debug 3)))
 
@@ -207,7 +207,7 @@
 实现:uiop:launch-program 起 /bin/sh -c,后台线程负责读输出,
 主线程以轮询等待;超时则终止进程并返回已收到的部分输出。
 副作用集中在进程与线程创建——这是执行外部命令的本质。"
-  (let* ((lock (bordeaux-threads:make-lock "clh-bash"))
+  (let* ((lock (bordeaux-threads:make-lock "chariot-bash"))
          (buffer '())                       ; 输出片段列表(倒序累积)
          (done nil)
          (process
@@ -233,7 +233,7 @@
                 (error ()
                   (bordeaux-threads:with-lock-held (lock)
                     (setf done t)))))
-            :name "clh-bash-reader")))
+            :name "chariot-bash-reader")))
     (let ((deadline (+ (get-internal-real-time)
                        (* timeout-seconds internal-time-units-per-second)))
           (timed-out nil))
@@ -253,7 +253,7 @@
       (let ((exit-code (ignore-errors (uiop:wait-process process))))
         (values
          (bordeaux-threads:with-lock-held (lock)
-           (clh-util:join-string (reverse buffer) (string #\newline)))
+           (chariot-util:join-string (reverse buffer) (string #\newline)))
          exit-code
          timed-out)))))
 
@@ -317,7 +317,7 @@
 绝对路径若不在 ROOT 下、或相对路径上跳越过 ROOT(过多 ..),一律信号
 TOOL-ERROR。词法边界:不追查符号链接,这一点由文档显式声明。"
   (let* ((root-str (namestring (uiop:ensure-directory-pathname (pathname root))))
-         (raw (clh-util:ensure-string path))
+         (raw (chariot-util:ensure-string path))
          (rel-str (if (uiop:absolute-pathname-p raw)
                       (progn
                         (unless (and (>= (length raw) (length root-str))
@@ -327,7 +327,7 @@ TOOL-ERROR。词法边界:不追查符号链接,这一点由文档显式声明�
                       raw))
          (parts '())
          (escape nil))
-    (dolist (part (clh-util:split-string rel-str :delimiter #\/))
+    (dolist (part (chariot-util:split-string rel-str :delimiter #\/))
       (cond ((or (string= part "") (string= part ".")))
             ((string= part "..")
              (if parts (pop parts) (setf escape t)))

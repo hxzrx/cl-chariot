@@ -21,7 +21,7 @@
 ;;;; 服务器暂不支持。未做 OAuth 2.1,鉴权用静态 Bearer(:API-KEY)
 ;;;; 与自定义头(:HEADERS)。
 
-(in-package :clh-mcp)
+(in-package :chariot-mcp)
 
 (declaim (optimize (speed 1) (safety 3) (debug 3)))
 

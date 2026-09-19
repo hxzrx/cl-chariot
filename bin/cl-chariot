@@ -1,0 +1,14 @@
+#!/bin/sh
+# CL-Chariot 命令行入口(SBCL)
+# 用法:bin/cl-chariot [选项] [提示词]   详见 --help
+set -e
+cd "$(dirname "$0")/.."
+# 通过环境变量把 shell 参数透传给 Lisp 进程(以 ASCII 0x1F 分隔)
+CHARIOT_ARGV=""
+for arg in "$@"; do
+  CHARIOT_ARGV="$CHARIOT_ARGV$(printf '%s\037' "$arg")"
+done
+export CHARIOT_ARGV
+exec sbcl --noinform --non-interactive \
+     --eval "(progn (require :asdf) (load \"~/quicklisp/setup.lisp\") (asdf:load-system :cl-chariot/cli))" \
+     --eval "(let ((code (chariot-cli:main (chariot-cli:argv-from-env)))) (uiop:quit (if (numberp code) code 0)))"

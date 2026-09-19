@@ -8,9 +8,9 @@
 ;;;;
 ;;;; 每个测试启动独立的假服务器实例(独立端口),互不串扰。
 
-(in-package :clh-test)
+(in-package :chariot-test)
 
-(def-suite mcp-http-suite :description "clh-mcp Streamable HTTP 传输")
+(def-suite mcp-http-suite :description "chariot-mcp Streamable HTTP 传输")
 (in-suite mcp-http-suite)
 
 ;;; ---------- 基础设施 ----------
@@ -24,7 +24,7 @@
    (list "python3"
          (uiop:native-namestring
           (merge-pathnames "fake-mcp-http-server.py"
-                           (asdf:component-pathname (asdf:find-system :cl-harness/test))))
+                           (asdf:component-pathname (asdf:find-system :cl-chariot/test))))
          "--port" (write-to-string port)
          "--token" token
          "--expire-after" (write-to-string expire-after))
@@ -77,7 +77,7 @@
         (is (string= "fake-http" (jref info "name")))
         (is (mcp-client-initialized-p client))
         ;; 会话 ID 已从响应头捕获
-        (is (not (null (clh-mcp::mcp-client-session-id client)))))
+        (is (not (null (chariot-mcp::mcp-client-session-id client)))))
       ;; initialized 通知已被服务器收到(202 路径)
       (is (eq :true (jref (%stats-of client) "initialized")))
       (is (mcp-ping client :timeout 10))
@@ -174,7 +174,7 @@
     (%wait-http-ready 8917)
     (with-http-client (client 8917 "dev-token")
       (initialize client :timeout 10)
-      (let ((old-session (clh-mcp::mcp-client-session-id client)))
+      (let ((old-session (chariot-mcp::mcp-client-session-id client)))
         (is (not (null old-session)))
         ;; 第 1、2 条带会话请求正常
         (is (string= "echo:a" (call-tool client "echo" '(:obj ("text" . "a")) :timeout 10)))
@@ -182,7 +182,7 @@
         ;; 第 3 条触发 404 → 客户端应自动重握手并重放,调用无感成功
         (is (string= "echo:c" (call-tool client "echo" '(:obj ("text" . "c")) :timeout 10)))
         ;; 会话 ID 已更换
-        (is (not (equal old-session (clh-mcp::mcp-client-session-id client))))
+        (is (not (equal old-session (chariot-mcp::mcp-client-session-id client))))
         ;; 新会话继续可用
         (is (string= "echo:d" (call-tool client "echo" '(:obj ("text" . "d")) :timeout 10)))
         ;; 服务器视角:发生过 404,且 initialized 状态被重握手恢复

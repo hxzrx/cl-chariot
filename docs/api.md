@@ -1,6 +1,6 @@
 # API 参考(API Reference)
 
-面向使用者的统一入口是 `clh` 包;文中示例均在 `(ql:quickload :cl-harness)` 之后运行。
+面向使用者的统一入口是 `chariot` 包;文中示例均在 `(ql:quickload :cl-chariot)` 之后运行。
 所有 `result`/`message`/`usage` 等数据对象均为不可变值;所有访问器为纯函数。
 
 ## 1. Provider(模型服务配置)
@@ -8,7 +8,7 @@
 ### make-provider
 
 ```lisp
-(clh-llm:make-provider name &key base-url api-key model env-var
+(chariot-llm:make-provider name &key base-url api-key model env-var
                        temperature max-tokens retries retry-delay timeout
                        extra-body extra-headers)
 ```
@@ -21,16 +21,16 @@
 ### chat(底层直调,一般经由智能体)
 
 ```lisp
-(clh-llm:chat provider messages &key tools (stream t) on-delta temperature max-tokens)
+(chariot-llm:chat provider messages &key tools (stream t) on-delta temperature max-tokens)
 → (values assistant消息 usage finish-reason)
 ```
 
 - `messages`:消息列表(见 §6);
 - `on-delta`:`(lambda (kind text))`,`kind ∈ :text / :reasoning`;
 - 重试策略:429/408/5xx 与传输层失败指数退避;「空回复」(2xx 但无文本无工具调用,
-  reasoning 模型常见)同样视为瞬时故障参与重试,耗尽后信号 `clh-llm:empty-response-error`;
-  不可重试错误信号 `clh-llm:api-error`;
-- 高级:绑定 `clh-llm:*http-post-fn*` 可整体替换 HTTP 传输(测试/网关);
+  reasoning 模型常见)同样视为瞬时故障参与重试,耗尽后信号 `chariot-llm:empty-response-error`;
+  不可重试错误信号 `chariot-llm:api-error`;
+- 高级:绑定 `chariot-llm:*http-post-fn*` 可整体替换 HTTP 传输(测试/网关);
   `empty-response-p` 为空回复形态的公开判定。
 
 ## 2. 工具
@@ -38,7 +38,7 @@
 ### make-tool / define-tool
 
 ```lisp
-(clh-tools:make-tool :name "bash" :description "..."
+(chariot-tools:make-tool :name "bash" :description "..."
                      :readonly-p nil
                      :parameters '(("command" "string" "命令" :required))
                      :handler (lambda (args) "..."))
@@ -47,7 +47,7 @@
 宏形式(等价):
 
 ```lisp
-(clh-tools:define-tool "word-count" "统计单词数" (:readonly t)
+(chariot-tools:define-tool "word-count" "统计单词数" (:readonly t)
   (("text" "string" "文本" :required))
   (lambda (args) (format nil "~D" 42)))
 ```
@@ -58,8 +58,8 @@
 ### execute-tool / 校验
 
 ```lisp
-(clh-tools:execute-tool tool args-object)   ; → (values 结果字符串 失败标记)
-(clh-tools:validate-tool-args tool args)    ; → 缺失必填参数名列表或 NIL
+(chariot-tools:execute-tool tool args-object)   ; → (values 结果字符串 失败标记)
+(chariot-tools:validate-tool-args tool args)    ; → 缺失必填参数名列表或 NIL
 ```
 
 `execute-tool` 永不信号条件:一切失败转为 `(values 错误文本 T)`。
@@ -67,10 +67,10 @@
 ### 内置工具
 
 ```lisp
-clh-tools:+builtin-tools+     ; 工具列表
-(clh-tools:builtin-tool-names) ; => ("bash" "read" "write" "edit" "glob" "grep" "web-fetch")
-(clh-tools:find-tool tools name)
-(clh-tools:tools-by-names tools '("read" "grep"))  ; 装配子集,名称错误即报错
+chariot-tools:+builtin-tools+     ; 工具列表
+(chariot-tools:builtin-tool-names) ; => ("bash" "read" "write" "edit" "glob" "grep" "web-fetch")
+(chariot-tools:find-tool tools name)
+(chariot-tools:tools-by-names tools '("read" "grep"))  ; 装配子集,名称错误即报错
 ```
 
 各工具参数见其 `:description`(会原样进入模型可见的 Schema)。
@@ -81,24 +81,24 @@ clh-tools:+builtin-tools+     ; 工具列表
 工具面、JSON Schema 与审批分级不变,替换世界即替换执行环境:
 
 ```lisp
-clh-tools:+builtin-tools+                  ; 等价于 (make-builtin-tools)——本机世界
-(clh-tools:make-builtin-tools &key world)  ; 把世界闭包进七件工具的处理函数
+chariot-tools:+builtin-tools+                  ; 等价于 (make-builtin-tools)——本机世界
+(chariot-tools:make-builtin-tools &key world)  ; 把世界闭包进七件工具的处理函数
 
 ;; 局部覆写:未给出的操作槽回落本机实现
-(clh-tools:make-execution-world :fetch-url (lambda (url) ...))
+(chariot-tools:make-execution-world :fetch-url (lambda (url) ...))
 
 ;; 路径前缀受限世界:词法限制在 ROOT 内,呈现相对路径,进程以 ROOT 为 cwd
-(clh-tools:make-path-bound-world "/srv/app" &key name)
+(chariot-tools:make-path-bound-world "/srv/app" &key name)
 
 ;; bubblewrap 进程级沙箱世界:路径边界 + 命令在内核命名空间隔离下运行
 ;; (基础系统只读、工作区绑定挂载、默认无网络、IPC/PID/UTS 隔离)
-(clh-tools:make-bwrap-world "/srv/app" &key name network writable)
-(clh-tools:bwrap-usable-p)                 ; 预探测(结果进程内记忆)
+(chariot-tools:make-bwrap-world "/srv/app" &key name network writable)
+(chariot-tools:bwrap-usable-p)                 ; 预探测(结果进程内记忆)
 
 ;; 智能体使用受限世界
-(clh:make-agent :provider p
-                :tools (clh-tools:make-builtin-tools
-                        :world (clh-tools:make-path-bound-world "/srv/app")))
+(chariot:make-agent :provider p
+                :tools (chariot-tools:make-builtin-tools
+                        :world (chariot-tools:make-path-bound-world "/srv/app")))
 ```
 
 世界操作面(`execution-world` 结构的八个操作槽:resolve-path /
@@ -114,7 +114,7 @@ grep-files / run-command / fetch-url)见 `src/world.lisp` 头注与
 ### make-agent
 
 ```lisp
-(clh:make-agent &key provider tools system-prompt max-turns
+(chariot:make-agent &key provider tools system-prompt max-turns
                    max-identical-turns
                    permission-mode allowed-tools disallowed-tools
                    ask-callback verify-callback on-event
@@ -125,8 +125,8 @@ grep-files / run-command / fetch-url)见 `src/world.lisp` 头注与
 | 参数 | 默认 | 说明 |
 |---|---|---|
 | `:provider` | 必填 | LLM-CONFIG |
-| `:tools` | `'()` | 工具列表;常用 `clh-tools:+builtin-tools+` |
-| `:system-prompt` | 内置默认 | NIL 时使用 `clh-agent:+default-system-prompt+` |
+| `:tools` | `'()` | 工具列表;常用 `chariot-tools:+builtin-tools+` |
+| `:system-prompt` | 内置默认 | NIL 时使用 `chariot-agent:+default-system-prompt+` |
 | `:max-turns` | 40 | 轮数护栏 |
 | `:max-identical-turns` | 4 | 循环瘫痪护栏:同一组「工具名+参数」连续 N 轮即以 `:stalled` 停止;NIL 关闭 |
 | `:permission-mode` | `:default` | `:yolo` / `:default` / `:readonly` |
@@ -158,24 +158,24 @@ grep-files / run-command / fetch-url)见 `src/world.lisp` 头注与
 
 ```lisp
 ;; 默认实现:单次无工具的模型调用(经 :chat-fn 注入,非流式)
-(clh:default-compaction-fn agent)   ; → (lambda (被省略消息) → (values 摘要文本 用量))
+(chariot:default-compaction-fn agent)   ; → (lambda (被省略消息) → (values 摘要文本 用量))
 
 ;; 自定义压缩器:任何 (VALUES 摘要文本 用量) 形态的函数
-(clh:make-agent ...
+(chariot:make-agent ...
                 :trim-tokens 60000
                 :compaction-fn (lambda (elided-messages)
                                  (values (my-internal-summarizer elided-messages) usage)))
 
 ;; 纯投影(测试与自定义装配)
-(clh-agent:build-summary-message summary-text elided elided-tokens) ; → 合成 user 消息
-(clh-agent:splice-summary trim-result hint summary-message)         ; → 新请求序列
+(chariot-agent:build-summary-message summary-text elided elided-tokens) ; → 合成 user 消息
+(chariot-agent:splice-summary trim-result hint summary-message)         ; → 新请求序列
 ```
 
 ### run / run-prompt
 
 ```lisp
-(clh:run agent prompt &key messages max-turns) → RUN-RESULT
-(clh:run-prompt provider prompt &rest agent-keys) → RUN-RESULT  ; 一步式
+(chariot:run agent prompt &key messages max-turns) → RUN-RESULT
+(chariot:run-prompt provider prompt &rest agent-keys) → RUN-RESULT  ; 一步式
 ```
 
 - `:messages` 给出时在既有对话上续跑(prompt 追加为新的 user 消息);
@@ -185,12 +185,12 @@ grep-files / run-command / fetch-url)见 `src/world.lisp` 头注与
   - `:unverified`:目标验证门未通过(配置了 `:verify-callback` 且回调拒绝/异常);
   - `:stalled`:连续相同工具调用达到 `:max-identical-turns` 上限(循环瘫痪止损);
   - `:empty`:模型重试后仍返回空回复(消息保留,不产生条件);
-- 用量对象:`(clh-llm:usage-prompt-tokens u)` / `usage-completion-tokens` / `usage-total-tokens`。
+- 用量对象:`(chariot-llm:usage-prompt-tokens u)` / `usage-completion-tokens` / `usage-total-tokens`。
 
 ### 子智能体
 
 ```lisp
-(clh:make-subagent-tool provider :tools '("read" "glob" "grep")
+(chariot:make-subagent-tool provider :tools '("read" "glob" "grep")
                        :max-turns 8 :permission-mode :yolo)
 ```
 
@@ -199,7 +199,7 @@ grep-files / run-command / fetch-url)见 `src/world.lisp` 头注与
 ## 4. 审批
 
 ```lisp
-(clh-agent:decide-permission "bash" nil
+(chariot-agent:decide-permission "bash" nil
                              :mode :default
                              :allowed-tools '() :disallowed-tools '()
                              :ask-callback (lambda (name) t))
@@ -230,18 +230,18 @@ grep-files / run-command / fetch-url)见 `src/world.lisp` 头注与
 ## 6. 消息与会话
 
 ```lisp
-(clh-msg:make-user-message "hi")                  ; (:OBJ ("role" . "user") ("content" . "hi"))
-(clh-msg:make-assistant-message :content "..." :tool-calls (list call))
-(clh-msg:make-tool-message call-id "结果文本")
-(clh-msg:last-assistant-text messages)
+(chariot-msg:make-user-message "hi")                  ; (:OBJ ("role" . "user") ("content" . "hi"))
+(chariot-msg:make-assistant-message :content "..." :tool-calls (list call))
+(chariot-msg:make-tool-message call-id "结果文本")
+(chariot-msg:last-assistant-text messages)
 ```
 
 会话(JSONL):
 
 ```lisp
-(clh-agent:session-log-message path message)      ; 智能体在 :session-file 下自动调用
-(multiple-value-bind (events corrupt) (clh-agent:session-load path) ...)
-(clh-agent:session-messages events)               ; 还原消息序列 → run :messages 续跑
+(chariot-agent:session-log-message path message)      ; 智能体在 :session-file 下自动调用
+(multiple-value-bind (events corrupt) (chariot-agent:session-load path) ...)
+(chariot-agent:session-messages events)               ; 还原消息序列 → run :messages 续跑
 ```
 
 `:session-file` 启用时,`run` 内部经 **SESSION-LOGGER** 写入:除消息/用量/元信息外,
@@ -254,10 +254,10 @@ meta 记录另携带 `config-digest` 的**配置摘要**(轮数/审批模式/工
 同配置跨运行指纹一致,配置任一字段变化即反映到指纹。
 
 ```lisp
-(clh-agent:make-session-logger path)              ; 显式构造;自动从既有记录数续起 seq
-(clh-agent:session-record target object)          ; target 为路径或 logger,返回写入记录
-(clh-agent:session-count-records path)            ; 既有记录行数(序号恢复用)
-(clh-agent:config-digest agent)                   ; 配置摘要 alist(含 config_digest 指纹)
+(chariot-agent:make-session-logger path)              ; 显式构造;自动从既有记录数续起 seq
+(chariot-agent:session-record target object)          ; target 为路径或 logger,返回写入记录
+(chariot-agent:session-count-records path)            ; 既有记录行数(序号恢复用)
+(chariot-agent:config-digest agent)                   ; 配置摘要 alist(含 config_digest 指纹)
 ```
 
 ### 回放 / 检索 / 分叉 / 不变量
@@ -266,31 +266,31 @@ meta 记录另携带 `config-digest` 的**配置摘要**(轮数/审批模式/工
 
 ```lisp
 ;;; 回放:任意时刻的消息投影与事件流还原
-(clh-agent:session-messages-at records seq)       ; seq ≤ N 的消息历史(任意时刻切片)
-(clh-agent:session-events records &key kinds)     ; 事件镜像记录(缺省排除 message/usage/meta/fork)
-(clh-agent:session-record->event record)          ; 还原回事件 plist,可重喂 :on-event 消费方
+(chariot-agent:session-messages-at records seq)       ; seq ≤ N 的消息历史(任意时刻切片)
+(chariot-agent:session-events records &key kinds)     ; 事件镜像记录(缺省排除 message/usage/meta/fork)
+(chariot-agent:session-record->event record)          ; 还原回事件 plist,可重喂 :on-event 消费方
 
 ;;; 审计取值
-(clh-agent:session-meta records)                  ; 最近一次运行的 meta 记录
-(clh-agent:session-config-digest records)         ; 配置指纹(按指纹聚合运行做对比)
-(clh-agent:session-stop-reason records)           ; 最近一次运行的停止原因
+(chariot-agent:session-meta records)                  ; 最近一次运行的 meta 记录
+(chariot-agent:session-config-digest records)         ; 配置指纹(按指纹聚合运行做对比)
+(chariot-agent:session-stop-reason records)           ; 最近一次运行的停止原因
 
 ;;; 检索
-(clh-agent:session-filter records
+(chariot-agent:session-filter records
     :kinds '(:tool-result) :tool-name "bash" :error-p t
     :stop-reason :stalled :role :user :min-seq 2 :max-seq 9)
-(clh-agent:session-search path-or-records "登录") ; 解码文本值的子串检索(CJK 友好)
+(chariot-agent:session-search path-or-records "登录") ; 解码文本值的子串检索(CJK 友好)
 
 ;;; 分叉:从历史任意点续跑(止损重试 / what-if / 回归留存)
 (multiple-value-bind (count marker)
-    (clh-agent:session-fork "run.jsonl" "fork.jsonl" :upto-seq 7) ...
+    (chariot-agent:session-fork "run.jsonl" "fork.jsonl" :upto-seq 7) ...
 ;; 从分叉点继续:session-file 指向分叉文件,序号接续不回绕
-(clh:run (clh:make-agent ... :session-file "fork.jsonl")
-         nil :messages (clh-agent:session-messages-at fork-records 7))
+(chariot:run (chariot:make-agent ... :session-file "fork.jsonl")
+         nil :messages (chariot-agent:session-messages-at fork-records 7))
 
 ;;; 「模型可见即已记录」不变量
-(clh-agent:session-compact-hints records)         ; 裁剪提示消息(「已记录」集合的一部分)
-(clh-agent:session-recording-break sent-turns records)
+(chariot-agent:session-compact-hints records)         ; 裁剪提示消息(「已记录」集合的一部分)
+(chariot-agent:session-recording-break sent-turns records)
 ;; NIL,或 (:kind :not-recorded :turn n :message m)——审计链断裂点
 ```
 
@@ -304,10 +304,10 @@ meta 记录另携带 `config-digest` 的**配置摘要**(轮数/审批模式/工
 ## 7. 错误处理
 
 ```lisp
-(handler-case (clh:run agent task)
-  (clh-llm:api-key-missing (e) ...)   ; 配置错误
-  (clh-llm:api-error (e)              ; API 故障(重试耗尽)
-    (format t "HTTP ~A: ~A" (clh-llm:api-error-status e) (clh-llm:api-error-body e))))
+(handler-case (chariot:run agent task)
+  (chariot-llm:api-key-missing (e) ...)   ; 配置错误
+  (chariot-llm:api-error (e)              ; API 故障(重试耗尽)
+    (format t "HTTP ~A: ~A" (chariot-llm:api-error-status e) (chariot-llm:api-error-body e))))
 ```
 
 工具失败不产生条件(转为失败工具结果);`max-turns`/预算耗尽也不产生条件,
@@ -316,16 +316,16 @@ meta 记录另携带 `config-digest` 的**配置摘要**(轮数/审批模式/工
 
 ## 8. MCP 客户端(Model Context Protocol)
 
-系统:`cl-harness/mcp`(`(ql:quickload :cl-harness/mcp)`)。协议版本:声明
+系统:`cl-chariot/mcp`(`(ql:quickload :cl-chariot/mcp)`)。协议版本:声明
 **2025-11-25**,向下兼容 2025-06-18 / 2025-03-26 / 2024-11-05。
 传输:**stdio**(本地子进程)与 **Streamable HTTP**(远程端点)。
 
 ### make-mcp-client / make-mcp-http-client
 
 ```lisp
-(clh-mcp:make-mcp-client command &rest args
+(chariot-mcp:make-mcp-client command &rest args
                          &key name default-timeout notification-callback)
-(clh-mcp:make-mcp-http-client url &key name api-key headers default-timeout)
+(chariot-mcp:make-mcp-http-client url &key name api-key headers default-timeout)
 ```
 
 - stdio:`command` 为可执行程序,其后**位于关键字之前的连续字符串参数**
@@ -339,9 +339,9 @@ meta 记录另携带 `config-digest` 的**配置摘要**(轮数/审批模式/工
 ### initialize / mcp-ping / close-mcp-client
 
 ```lisp
-(clh-mcp:initialize client &key timeout)  ; → (values 协商版本 server-info)
-(clh-mcp:mcp-ping client &key timeout)    ; → T
-(clh-mcp:close-mcp-client client)         ; 幂等;HTTP 按 DELETE 结束会话
+(chariot-mcp:initialize client &key timeout)  ; → (values 协商版本 server-info)
+(chariot-mcp:mcp-ping client &key timeout)    ; → T
+(chariot-mcp:close-mcp-client client)         ; 幂等;HTTP 按 DELETE 结束会话
 ```
 
 - `initialize` 执行版本协商并记录服务器信息;重复调用直接返回已协商结果;
@@ -350,8 +350,8 @@ meta 记录另携带 `config-digest` 的**配置摘要**(轮数/审批模式/工
 ### list-tools / call-tool
 
 ```lisp
-(clh-mcp:list-tools client &key force timeout)  ; → 原始工具描述列表(带缓存)
-(clh-mcp:call-tool client name arguments &key timeout)
+(chariot-mcp:list-tools client &key force timeout)  ; → 原始工具描述列表(带缓存)
+(chariot-mcp:call-tool client name arguments &key timeout)
     ; → (values 文本结果 IS-ERROR-P 完整result)
 ```
 
@@ -363,10 +363,10 @@ meta 记录另携带 `config-digest` 的**配置摘要**(轮数/审批模式/工
 ### mcp-tools-from-server(工具桥接)
 
 ```lisp
-(clh-mcp:mcp-tools-from-server client &key (name-prefix "mcp") force timeout)
+(chariot-mcp:mcp-tools-from-server client &key (name-prefix "mcp") force timeout)
 ```
 
-把服务器工具转换为 `clh-tools:tool` 对象,与内置工具同等并入
+把服务器工具转换为 `chariot-tools:tool` 对象,与内置工具同等并入
 `make-agent :tools` 使用:名字 `mcp__<server>__<tool>`,`inputSchema` 经
 `make-tool*` 零损失携带,`readOnlyHint` 映射只读分级(默认审批模式下
 变更类工具走人工确认),`isError` 与协议错误转为可回喂模型的 `tool-error`。
@@ -388,7 +388,7 @@ meta 记录另携带 `config-digest` 的**配置摘要**(轮数/审批模式/工
 ### 命令行零代码接入
 
 ```bash
-bin/cl-harness --mcp "NAME=CMD[+ARG…]" --mcp "NAME=@URL[+TOKEN]" "任务"
+bin/cl-chariot --mcp "NAME=CMD[+ARG…]" --mcp "NAME=@URL[+TOKEN]" "任务"
 ```
 
 REPL 中 `/mcp` 查看服务器状态、`/tools` 查看全部工具;完整细节见

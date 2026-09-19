@@ -5,7 +5,7 @@
 用途:
   1. 本机开发自测(配合 server.py);
   2. 部署到 cantos.cn 后,从外部验证部署是否正确——
-     在动 cl-harness 之前,先确认服务器本身是好的。
+     在动 cl-chariot 之前,先确认服务器本身是好的。
 
 用法:
   python3 smoke_test.py <endpoint-url> [bearer-token]

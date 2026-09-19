@@ -1,4 +1,4 @@
-# CL-Harness
+# CL-Chariot
 
 **Common Lisp 编写的智能体驾驭框架(Agent Harness)** —— 以统一的 OpenAI 兼容协议驱动
 DeepSeek / Qwen / GLM / OpenAI 等多种大模型,提供可编程的智能体主循环、工具系统、
@@ -38,45 +38,45 @@ DeepSeek / Qwen / GLM / OpenAI 等多种大模型,提供可编程的智能体主
 本目录已注册到 ASDF source-registry 的前提下,任意 Lisp 进程内:
 
 ```lisp
-(ql:quickload :cl-harness)   ; 或 (asdf:load-system :cl-harness)
+(ql:quickload :cl-chariot)   ; 或 (asdf:load-system :cl-chariot)
 ```
 
 ### 1. 作为程序库使用
 
 ```lisp
-(ql:quickload :cl-harness)
+(ql:quickload :cl-chariot)
 
 ;; 一站式运行:内置工具 + yolo 模式(自动放行全部工具)
-(let ((provider (clh-llm:make-provider :deepseek)))   ; API Key 从 $DEEPSEEK_API_KEY 读取
-  (let ((result (clh:run-prompt provider "统计当前目录下有多少个 .lisp 文件"
-                                :tools clh-tools:+builtin-tools+
+(let ((provider (chariot-llm:make-provider :deepseek)))   ; API Key 从 $DEEPSEEK_API_KEY 读取
+  (let ((result (chariot:run-prompt provider "统计当前目录下有多少个 .lisp 文件"
+                                :tools chariot-tools:+builtin-tools+
                                 :permission-mode :yolo)))
-    (format t "~A~%" (clh:result-text result))))
+    (format t "~A~%" (chariot:result-text result))))
 ```
 
 更多程序库用法见 [docs/api.md](docs/api.md)。
 
 ### 1b. 接入 MCP 服务器
 
-`cl-harness/mcp` 提供 **stdio 与 Streamable HTTP** 双传输的 MCP 客户端
+`cl-chariot/mcp` 提供 **stdio 与 Streamable HTTP** 双传输的 MCP 客户端
 (声明协议版本 2025-11-25,向下兼容 2025-06-18 及更早),把 MCP 服务器的
 tools 桥接为普通工具对象,与
 内置工具同等使用:
 
 ```lisp
-(ql:quickload :cl-harness/mcp)
+(ql:quickload :cl-chariot/mcp)
 
 ;; stdio:本地子进程
-(let ((client (clh-mcp:make-mcp-client "python3" "/path/to/mcp-server.py")))
+(let ((client (chariot-mcp:make-mcp-client "python3" "/path/to/mcp-server.py")))
   ;; 或 Streamable HTTP:远程端点
-  ;; (let ((client (clh-mcp:make-mcp-http-client "https://cantos.cn/mcp" :api-key "<token>")))
+  ;; (let ((client (chariot-mcp:make-mcp-http-client "https://cantos.cn/mcp" :api-key "<token>")))
   (unwind-protect
        (progn
-         (clh-mcp:initialize client)                      ; 握手 + 版本协商
-         (let ((tools (clh-mcp:mcp-tools-from-server client)))  ; 工具桥接
-           (clh:run-prompt (clh-llm:make-provider :deepseek) "……"
-                           :tools (append clh-tools:+builtin-tools+ tools))))
-    (clh-mcp:close-mcp-client client)))
+         (chariot-mcp:initialize client)                      ; 握手 + 版本协商
+         (let ((tools (chariot-mcp:mcp-tools-from-server client)))  ; 工具桥接
+           (chariot:run-prompt (chariot-llm:make-provider :deepseek) "……"
+                           :tools (append chariot-tools:+builtin-tools+ tools))))
+    (chariot-mcp:close-mcp-client client)))
 ```
 
 离线端到端演示(无需 API Key):`sbcl --script examples/mcp-demo.lisp`。
@@ -86,14 +86,14 @@ HTTPS 端点的测试服务器部署)。
 ### 2. 命令行使用
 
 ```bash
-bin/cl-harness --help
+bin/cl-chariot --help
 
 # 一次性执行(适合脚本与 CI)
 export DEEPSEEK_API_KEY=sk-...
-bin/cl-harness -P deepseek -m deepseek-v4-flash "用一句话介绍你自己"
+bin/cl-chariot -P deepseek -m deepseek-v4-flash "用一句话介绍你自己"
 
 # 交互式 REPL
-bin/cl-harness -P glm --permission default
+bin/cl-chariot -P glm --permission default
 ```
 
 REPL 内置斜杠命令:`/help` `/tools` `/mcp` `/model NAME` `/provider NAME` `/usage` `/clear` `/system TEXT` `/quit`。
@@ -102,9 +102,9 @@ REPL 内置斜杠命令:`/help` `/tools` `/mcp` `/model NAME` `/provider NAME` `
 
 ```bash
 # stdio:本地子进程(参数以 + 分隔)
-bin/cl-harness --mcp "fs=npx+-y+@modelcontextprotocol/server-filesystem+/tmp" "……"
+bin/cl-chariot --mcp "fs=npx+-y+@modelcontextprotocol/server-filesystem+/tmp" "……"
 # Streamable HTTP:远程端点(第二个 + 后为 Bearer token)
-bin/cl-harness --mcp "cantos=@https://cantos.cn/mcp+<token>" "……"
+bin/cl-chariot --mcp "cantos=@https://cantos.cn/mcp+<token>" "……"
 ```
 
 启动时自动握手并把 MCP 工具桥接为本地工具(与内置工具同等参与审批);
@@ -123,7 +123,7 @@ demo/run.sh          # 依次运行三个渐进式示例
 
 ```bash
 tests/run.sh                          # 离线全量测试(946 项断言)
-CLH_LIVE=1 tests/run.sh               # 附加真机联调(需 API Key)
+CHARIOT_LIVE=1 tests/run.sh               # 附加真机联调(需 API Key)
 ```
 
 SBCL 与 CCL 上均全部通过;真机联调覆盖流式对话、工具调用与多轮循环。
@@ -135,30 +135,30 @@ SBCL 与 CCL 上均全部通过;真机联调覆盖流式对话、工具调用与
 ```lisp
 ;; 1) 厂商配置(预设 + 覆盖,不可变值对象)
 (defparameter *provider*
-  (clh-llm:make-provider :deepseek      ; :deepseek / :qwen / :glm / :openai / 任意关键字
+  (chariot-llm:make-provider :deepseek      ; :deepseek / :qwen / :glm / :openai / 任意关键字
                          :model "deepseek-v4-flash"))
 
 ;; 2) 自定义一个工具(声明式宏)
-(clh-tools:define-tool "word-count" "统计文本的单词数" (:readonly t)
+(chariot-tools:define-tool "word-count" "统计文本的单词数" (:readonly t)
   (("text" "string" "要统计的文本" :required))
   (lambda (args)
-    (format nil "~D" (length (clh-util:split-string (clh-json:jref args "text"))))))
+    (format nil "~D" (length (chariot-util:split-string (chariot-json:jref args "text"))))))
 
 ;; 3) 组装智能体并运行
-(let ((agent (clh:make-agent
+(let ((agent (chariot:make-agent
               :provider *provider*
-              :tools (append clh-tools:+builtin-tools+
-                             (list (clh-tools:find-tool clh-tools:+builtin-tools+ "bash")))
+              :tools (append chariot-tools:+builtin-tools+
+                             (list (chariot-tools:find-tool chariot-tools:+builtin-tools+ "bash")))
               :permission-mode :default              ; 变更类工具询问回调
               :ask-callback (lambda (name) (yes-or-no-p "允许工具 ~A?" name))
               :on-event (lambda (event)              ; 统一事件流
                           (when (eq (getf event :kind) :text-delta)
                             (write-string (getf event :text)))))
               :max-turns 20)))
-  (let ((result (clh:run agent "阅读 README.md 并总结")))
-    (values (clh:result-text result)
-            (clh:result-stop-reason result)
-            (clh:result-usage result))))
+  (let ((result (chariot:run agent "阅读 README.md 并总结")))
+    (values (chariot:result-text result)
+            (chariot:result-stop-reason result)
+            (chariot:result-usage result))))
 ```
 
 事件机制是整个框架的可观测性核心:CLI 的人类可读输出与嵌入方的结构化日志,
@@ -170,8 +170,8 @@ SBCL 与 CCL 上均全部通过;真机联调覆盖流式对话、工具调用与
 ## 目录结构
 
 ```
-cl-harness/
-├── cl-harness.asd          # 全部系统定义(base/llm/tools/agent/伞形/cli/test/demo)
+cl-chariot/
+├── cl-chariot.asd          # 全部系统定义(base/llm/tools/agent/伞形/cli/test/demo)
 ├── src/                    # 源码(全部带中文文档注释)
 │   ├── packages.lisp       #   包定义(模块边界即包边界)
 │   ├── util.lisp           #   基础纯函数:字符串/alist/token 估算/diff
@@ -194,23 +194,23 @@ cl-harness/
 ├── examples/               # 单文件示例脚本(MCP 端到端演示等)
 ├── demo/                   # 完整示例项目
 ├── docs/                   # 架构 / API / 厂商接入文档
-└── bin/cl-harness          # CLI 启动脚本
+└── bin/cl-chariot          # CLI 启动脚本
 ```
 
 ## 架构分层
 
 ```
 ┌────────────────────────────────────────────────┐
-│  cl-harness/cli        命令行前端(REPL/one-shot)│
+│  cl-chariot/cli        命令行前端(REPL/one-shot)│
 ├────────────────────────────────────────────────┤
-│  cl-harness            伞形包 + 子智能体工具     │
+│  cl-chariot            伞形包 + 子智能体工具     │
 ├────────────────────────────────────────────────┤
-│  cl-harness/agent      主循环·上下文·审批·会话   │
+│  cl-chariot/agent      主循环·上下文·审批·会话   │
 ├──────────────────────┬─────────────────────────┤
-│  cl-harness/llm      │  cl-harness/tools       │
+│  cl-chariot/llm      │  cl-chariot/tools       │
 │  多厂商·SSE·重试      │  define-tool·内置七件    │
 ├──────────────────────┴─────────────────────────┤
-│  cl-harness/base       JSON·消息模型·纯函数工具  │
+│  cl-chariot/base       JSON·消息模型·纯函数工具  │
 └────────────────────────────────────────────────┘
 ```
 
