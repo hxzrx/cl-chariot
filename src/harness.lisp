@@ -11,7 +11,7 @@
 
 (declaim (optimize (speed 1) (safety 3) (debug 3)))
 
-(defparameter +version+ "0.4.0"
+(defparameter +version+ "0.5.0"
   "CL-Harness 版本号。")
 
 (defun make-subagent-tool (provider
