@@ -204,7 +204,8 @@ Provider 重试同一请求;全部失败向上传播最后一次错误:
 - `:messages` 给出时在既有对话上续跑(prompt 追加为新的 user 消息);
 - RUN-RESULT 访问器:`result-messages` `result-text` `result-usage`
   `result-stop-reason`(`:end` `:unverified` `:max-turns` `:length` `:budget`
-  `:stalled` `:empty` `:cancelled` `:timeout`)`result-turns`;
+  `:stalled` `:empty` `:cancelled` `:timeout`)`result-turns`
+  `result-run-id`(运行标识,与该运行全部事件及会话记录的 run_id 一致);
   - `:unverified`:目标验证门未通过(配置了 `:verify-callback` 且回调拒绝/异常);
   - `:stalled`:连续相同工具调用达到 `:max-identical-turns` 上限(循环瘫痪止损);
   - `:empty`:模型重试后仍返回空回复(消息保留,不产生条件);
@@ -259,7 +260,9 @@ Provider 重试同一请求;全部失败向上传播最后一次错误:
 
 ## 5. 事件
 
-`:on-event` 回调收到的 plist 以 `:kind` 为键:
+`:on-event` 回调收到的 plist 以 `:kind` 为键。**运行中交付的每个事件统一
+携带 `:run-id`**(嵌套运行另带 `:parent-run-id`)——事件消费方无需状态
+跟踪即可把事件关联到运行,与宿主日志/计费对齐;下表载荷列为业务载荷:
 
 | kind | 载荷 | 时机 |
 |---|---|---|
@@ -368,6 +371,25 @@ meta 记录另携带 `config-digest` 的**配置摘要**(轮数/审批模式/工
 同一会话内多次运行、以及配置了 `:fallback-providers` 的运行中途切换,
 用量都能正确归属;`runs` 为 meta 记录数(每次 `run` 启动补写一条)。
 金额估算不在库内(价格随厂商变动),宿主可在报告之上叠加价目表。
+
+### 按运行对账(run-id)
+
+每次 `run` 生成唯一运行标识(`result-run-id`),该运行的**全部事件**与
+**全部会话记录**统一携带(事件 plist 的 `:run-id`,记录的 `run_id` 字段;
+嵌套运行另带父标识)——宿主的日志、计费与审计据此对齐:
+
+```lisp
+(chariot-agent:session-filter records :run-id (chariot:result-run-id result))
+;; → 恰为该运行写入的记录(消息/用量/事件镜像,与他次运行互不重叠)
+
+(chariot-agent:session-runs records)
+;; → 每次运行一条摘要(按文件顺序):
+;;   (:obj ("run_id" . …) ("parent_run_id" . …|:null) ("model" . …)
+;;         ("stop_reason" . "end"…) ("turns" . n) ("usage" . <该运行用量>))
+```
+
+`session-record-run-id` 读取单条记录的运行标识(直接落盘形态为 NIL);
+`session-record->event` 回放还原的事件同样携带 `:run-id`,与实时形状对称。
 
 ## 7. 错误处理
 

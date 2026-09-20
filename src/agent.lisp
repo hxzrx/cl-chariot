@@ -136,13 +136,21 @@ MAX-TOTAL-TOKENS        单次运行累计 token 预算,超限即停(:BUDGET);NI
 (defun emit-event (agent event)
   "向智能体的事件回调交付一个事件(EVENT 为 plist,含 :KIND 键),
 并把事件镜像写入当前会话文件(见 MIRROR-EVENT-TO-SESSION)。
+运行中(*RUN-ID* 绑定时)统一加盖 :RUN-ID(嵌套运行另带 :PARENT-RUN-ID)
+——事件消费方无需状态跟踪即可把事件关联到运行。
 回调自身的失败不应当打断运行——事件消费方的 bug 被降级为警告打印。"
-  (let ((hook (agent-on-event agent)))
-    (when hook
-      (handler-case (funcall hook event)
-        (error (e)
-          (format *error-output* "~&[cl-chariot] 事件回调异常(已忽略):~A~%" e)))))
-  (mirror-event-to-session event))
+  (let ((event (if *run-id*
+                   (append event
+                           (list :run-id *run-id*)
+                           (when *parent-run-id*
+                             (list :parent-run-id *parent-run-id*)))
+                   event)))
+    (let ((hook (agent-on-event agent)))
+      (when hook
+        (handler-case (funcall hook event)
+          (error (e)
+            (format *error-output* "~&[cl-chariot] 事件回调异常(已忽略):~A~%" e)))))
+    (mirror-event-to-session event)))
 
 ;;; ---------------------------------------------------------------------------
 ;;; 内部:事件镜像落盘
@@ -241,12 +249,14 @@ TEXT          最后一条含文本的 assistant 消息(最终答复;可能为 N
 USAGE         累计用量(:OBJ:prompt_tokens/completion_tokens/total_tokens);
 STOP-REASON   停止原因 :END / :UNVERIFIED / :MAX-TURNS / :BUDGET / :LENGTH
               / :EMPTY / :STALLED / :CANCELLED / :TIMEOUT;
-TURNS         实际执行的 LLM 调用轮数。"
+TURNS         实际执行的 LLM 调用轮数;
+RUN-ID        运行标识(与该运行全部事件及会话记录的 run_id 一致)。"
   messages
   text
   usage
   stop-reason
-  turns)
+  turns
+  run-id)
 
 ;;; 面向使用者的短名访问器(与导出符号一致;结构体访问器保留全名)
 (defun result-messages (result) "运行产生的完整消息序列。" (run-result-messages result))
@@ -254,6 +264,7 @@ TURNS         实际执行的 LLM 调用轮数。"
 (defun result-usage (result) "累计 token 用量(:OBJ)。" (run-result-usage result))
 (defun result-stop-reason (result) "停止原因关键字。" (run-result-stop-reason result))
 (defun result-turns (result) "实际 LLM 调用轮数。" (run-result-turns result))
+(defun result-run-id (result) "运行标识(与事件/会话记录的 run_id 对应)。" (run-result-run-id result))
 
 ;;; ---------------------------------------------------------------------------
 ;;; 内部:模型调用适配
@@ -500,14 +511,18 @@ TASK 只被本线程写入(结果槽),主线程在汇合后读取。
                     tasks))
         (let* ((cancel-token *cancel-token*)
                (run-deadline *run-deadline*)
+               (run-id *run-id*)
+               (parent-run-id *parent-run-id*)
                (threads (mapcar (lambda (task)
-                                  ;; 取消上下文经词法捕获传入工作线程
-                                  ;; (动态绑定不随 bt:make-thread 传播);
+                                  ;; 运行上下文(取消/期限/标识)经词法捕获传入
+                                  ;; 工作线程(动态绑定不随 bt:make-thread 传播);
                                   ;; 会话写入器显式置 NIL——工作线程不落盘
                                   (bordeaux-threads:make-thread
                                    (lambda ()
                                      (let ((*cancel-token* cancel-token)
                                            (*run-deadline* run-deadline)
+                                           (*run-id* run-id)
+                                           (*parent-run-id* parent-run-id)
                                            (*session-logger* nil))
                                        (run-tool-task agent task)))
                                    :name "chariot-tool"))
@@ -546,8 +561,10 @@ TASK 只被本线程写入(结果槽),主线程在汇合后读取。
 构造对应 RUN-RESULT。已完成的轮次全部保留在 MESSAGES(可续跑/审计)。"
   (emit-event agent (list :kind :cancel
                           :reason (if (eq halt :timeout) :timeout :requested)))
+  ;; RUN-ID 经动态绑定读取(%HALT-RUN 只在 RUN 的动态作用域内被调用)
   (let ((result (%make-run-result :messages messages :text text :usage usage
-                                  :stop-reason halt :turns turns)))
+                                  :stop-reason halt :turns turns
+                                  :run-id *run-id*)))
     (emit-event agent (list :kind :run-end :stop-reason halt
                             :turns turns :usage usage))
     result))
@@ -575,7 +592,8 @@ MAX-TURNS 覆盖配置中的轮数上限。
 空回复之外的模型基础设施故障(API-ERROR 等)向上传播,由调用方感知;
 工具失败不是循环失败:作为失败结果回喂模型,循环继续。
 
-事件序列(:KIND 键):
+事件序列(:KIND 键;运行中交付的每个事件统一携带 :RUN-ID,
+嵌套运行另带 :PARENT-RUN-ID——事件消费方无需状态跟踪即可关联运行):
   :RUN-START(:PROMPT) → {:TURN-START(:TURN) → :TEXT-DELTA/:REASONING-DELTA(:TEXT)
   → [:PROVIDER-SWITCH(:FROM :TO :MODEL :REASON)]
   → :ASSISTANT-MESSAGE(:MESSAGE) → :TOOL-CALL(:TOOL-NAME :ARGUMENTS :CALL-ID)
@@ -586,7 +604,11 @@ MAX-TURNS 覆盖配置中的轮数上限。
   → [:STALL(:TURN :STREAK :SIGNATURE)]}
   → [:CANCEL(:REASON :REQUESTED/:TIMEOUT)]
   → [:VERIFY(:PASSED-P :REASON)] → :RUN-END(:STOP-REASON :TURNS :USAGE)"
-  (let* (;; 取消上下文:显式给出用之,否则继承外层(嵌套运行传播)
+  (let* (;; 运行标识:内层运行生成新值,外层值保留为父标识(嵌套归属链)
+         (parent-run-id *run-id*)
+         (*parent-run-id* parent-run-id)
+         (*run-id* (gen-id "run"))
+         ;; 取消上下文:显式给出用之,否则继承外层(嵌套运行传播)
          (*cancel-token* (if cancel-token-p cancel-token *cancel-token*))
          ;; 墙钟期限:自身 TIMEOUT 与继承期限取较早者
          (*run-deadline* (%effective-deadline timeout))
@@ -628,7 +650,7 @@ MAX-TURNS 覆盖配置中的轮数上限。
                  ;; 轮数护栏
                  (when (> turn effective-max-turns)
                    (let ((result (%make-run-result
-                                  :messages msgs :text final-text :usage usage
+                                  :messages msgs :text final-text :usage usage :run-id *run-id*
                                   :stop-reason :max-turns :turns (1- turn))))
                      (emit-event agent (list :kind :run-end
                                              :stop-reason :max-turns
@@ -690,7 +712,7 @@ MAX-TURNS 覆盖配置中的轮数上限。
                          ;; 不作为基础设施故障向上传播
                          (empty-response-error ()
                            (let ((result (%make-run-result
-                                          :messages msgs :text final-text :usage usage
+                                          :messages msgs :text final-text :usage usage :run-id *run-id*
                                           :stop-reason :empty :turns turn)))
                              (emit-event agent (list :kind :run-end
                                                      :stop-reason :empty
@@ -709,7 +731,7 @@ MAX-TURNS 覆盖配置中的轮数上限。
                      (let ((budget (agent-max-total-tokens agent)))
                        (when (and budget (> (usage-total-tokens usage) budget))
                          (let ((result (%make-run-result
-                                        :messages msgs :text final-text :usage usage
+                                        :messages msgs :text final-text :usage usage :run-id *run-id*
                                         :stop-reason :budget :turns turn)))
                            (emit-event agent (list :kind :run-end
                                                    :stop-reason :budget
@@ -723,7 +745,7 @@ MAX-TURNS 覆盖配置中的轮数上限。
                          ;; 自然结束:无工具调用
                          ((null tool-calls)
                           (let ((result (%make-run-result
-                                         :messages msgs :text final-text :usage usage
+                                         :messages msgs :text final-text :usage usage :run-id *run-id*
                                          :stop-reason (if (string= (or finish "") "length")
                                                           :length :end)
                                          :turns turn)))
@@ -745,7 +767,7 @@ MAX-TURNS 覆盖配置中的轮数上限。
                                                         :passed-p passed-p :reason reason))
                                 (unless passed-p
                                   (setf result (%make-run-result
-                                                :messages msgs :text final-text :usage usage
+                                                :messages msgs :text final-text :usage usage :run-id *run-id*
                                                 :stop-reason :unverified :turns turn)))))
                             (emit-event agent (list :kind :run-end
                                                     :stop-reason (run-result-stop-reason result)
@@ -775,7 +797,7 @@ MAX-TURNS 覆盖配置中的轮数上限。
                                                       :streak identical-streak
                                                       :signature signature))
                               (let ((result (%make-run-result
-                                             :messages msgs :text final-text :usage usage
+                                             :messages msgs :text final-text :usage usage :run-id *run-id*
                                              :stop-reason :stalled :turns turn)))
                                 (emit-event agent (list :kind :run-end
                                                         :stop-reason :stalled

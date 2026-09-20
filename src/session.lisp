@@ -90,13 +90,19 @@ SEQ 单调递增;向既有文件追加时从已有记录数续起,崩溃或续�
   "向 TARGET(文件路径或 SESSION-LOGGER)追加一条记录,返回写入的记录。
 记录自动附加时间戳 ts;经 LOGGER 写入时再附加单调序号 seq。
 TARGET 为路径时退化为无序号形态(兼容直接以路径落盘的调用方式)。
-线程安全:序号分配与落盘在同一锁内原子完成(见 *SESSION-WRITE-LOCK*)。"
+线程安全:序号分配与落盘在同一锁内原子完成(见 *SESSION-WRITE-LOCK*)。
+运行中(*RUN-ID* 绑定时)统一加盖 run_id(嵌套运行再加 parent_run_id)
+——文件侧运行归属的唯一盖章点,与事件流的 EMIT-EVENT 对称。"
   (multiple-value-bind (path logger) (%session-target target)
     (bordeaux-threads:with-lock-held (*session-write-lock*)
       (let ((cells (jobj-alist object)))
         (push (cons "ts" (chariot-util:now-universal)) cells)
         (when logger
           (push (cons "seq" (incf (session-logger-seq logger))) cells))
+        (when *run-id*
+          (push (cons "run_id" *run-id*) cells)
+          (when *parent-run-id*
+            (push (cons "parent_run_id" *parent-run-id*) cells)))
         (let ((record (cons :obj cells)))
           (%append-line path (chariot-json:encode-json record))
           record)))))
@@ -224,6 +230,50 @@ PATHS 为会话文件路径字符串或其列表(跨会话/跨天汇总)。"
         ("by_model" . ,(buckets by-model "model"))
         ("by_day" . ,(buckets by-day "day"))))))
 
+(defun session-runs (records)
+  "按运行汇总:每个 meta 记录对应一次 RUN,返回运行摘要列表(按文件顺序):
+  (:obj (\"run_id\" . 标识) (\"parent_run_id\" . 父标识|:null)
+        (\"model\" . 模型|:null) (\"stop_reason\" . \"end\"…|:null)
+        (\"turns\" . 轮数|:null) (\"usage\" . <该运行累计用量>))
+同 run_id 的 usage 记录累加为该运行用量;run-end 镜像填充停止原因与轮数
+(运行未结束/崩溃时对应字段为 :null)。无 run_id 的历史记录同样按 meta
+分段汇总(run_id 为 :null)。计费与审计按运行对账的基础。"
+  (let ((entries '()))
+    (flet ((current () (first entries)))
+      (dolist (record records)
+        (case (session-record-kind record)
+          (:meta
+           (push (list (cons 'run-id (chariot-json:jref record "run_id"))
+                       (cons 'parent-run-id (chariot-json:jref record "parent_run_id"))
+                       (cons 'model (chariot-json:jref record "model"))
+                       (cons 'stop-reason nil)
+                       (cons 'turns nil)
+                       (cons 'usage (chariot-llm:zero-usage)))
+                 entries))
+          (:usage
+           (let ((cur (current)))
+             (when cur
+               (setf (cdr (assoc 'usage cur))
+                     (chariot-llm:add-usage
+                      (cdr (assoc 'usage cur))
+                      (chariot-json:jref record "usage" (chariot-llm:zero-usage)))))))
+          (:run-end
+           (let ((cur (current)))
+             (when cur
+               (setf (cdr (assoc 'stop-reason cur))
+                     (%kind-keyword (chariot-json:jref record "stop_reason")))
+               (setf (cdr (assoc 'turns cur))
+                     (chariot-json:jref record "turns")))))))
+      (mapcar (lambda (entry)
+                `(:obj
+                  ("run_id" . ,(or (cdr (assoc 'run-id entry)) :null))
+                  ("parent_run_id" . ,(or (cdr (assoc 'parent-run-id entry)) :null))
+                  ("model" . ,(or (cdr (assoc 'model entry)) :null))
+                  ("stop_reason" . ,(let ((reason (cdr (assoc 'stop-reason entry))))
+                                      (if reason (string-downcase (symbol-name reason)) :null)))
+                  ("turns" . ,(or (cdr (assoc 'turns entry)) :null))
+                  ("usage" . ,(cdr (assoc 'usage entry)))))
+              (nreverse entries)))))
 ;;; ---------------------------------------------------------------------------
 ;;; 记录取值
 ;;; ---------------------------------------------------------------------------
@@ -242,6 +292,10 @@ PATHS 为会话文件路径字符串或其列表(跨会话/跨天汇总)。"
 (defun session-record-seq (record)
   "记录的序号;经 SESSION-LOGGER 写入的记录才有(路径直写形态返回 NIL)。"
   (chariot-json:jref record "seq"))
+
+(defun session-record-run-id (record)
+  "记录的运行标识;运行中写入的记录才有(直接落盘形态返回 NIL)。"
+  (chariot-json:jref record "run_id"))
 
 (defun session-max-seq (records)
   "记录中的最大序号;全部无序号或空列表时返回 0。"
@@ -283,7 +337,19 @@ PATHS 为会话文件路径字符串或其列表(跨会话/跨天汇总)。"
 (defun session-record->event (record)
   "把事件镜像记录还原回事件 plist(:KIND 键)——回放的确定性形态:
 已知事件种类无损还原(产物可直接重喂 :ON-EVENT 消费方);
-未知或业务记录降级为只含 :KIND 的 plist(镜像的前向兼容在此对称)。"
+未知或业务记录降级为只含 :KIND 的 plist(镜像的前向兼容在此对称)。
+记录携带 run_id 时追加 :RUN-ID(嵌套另带 :PARENT-RUN-ID)——
+与运行中 EMIT-EVENT 交付的事件形状对称。"
+  (let ((event (%record->base-event record)))
+    (if (and event (chariot-json:jref record "run_id"))
+        (append event
+                (list :run-id (chariot-json:jref record "run_id"))
+                (when (chariot-json:jref record "parent_run_id")
+                  (list :parent-run-id (chariot-json:jref record "parent_run_id"))))
+        event)))
+
+(defun %record->base-event (record)
+  "把事件镜像记录还原为业务载荷 plist(不含运行盖章;见 SESSION-RECORD->EVENT)。"
   (let ((kind (session-record-kind record))
         (ref (lambda (key) (chariot-json:jref record key))))
     (case kind
@@ -390,13 +456,14 @@ CONFIG-DIGEST 写入的全部字段);没有 meta 时返回 NIL。"
 ;;; 检索
 ;;; ---------------------------------------------------------------------------
 
-(defun session-filter (records &key kinds tool-name
+(defun session-filter (records &key kinds tool-name run-id
                                     (error-p nil error-p-given)
                                     stop-reason role min-seq max-seq)
   "按条件筛选记录(全部条件取 AND;不传即不过滤),保持原顺序。
   KINDS        种类关键字列表(见 SESSION-RECORD-KIND);
   TOOL-NAME    匹配 tool_name 字段(tool-call / tool-result /
                permission-denied / stall 记录);
+  RUN-ID       匹配 run_id 字段——按运行圈定记录(运行中写入的记录才有);
   ERROR-P      给出时按 error_p 字段筛:非 NIL 取失败记录,NIL 取成功记录
                (无该字段的记录不匹配任一筛值);
   STOP-REASON  按 run-end 镜像的 stop_reason 关键字筛;
@@ -419,6 +486,8 @@ CONFIG-DIGEST 写入的全部字段);没有 meta 时返回 NIL。"
                 (member (session-record-kind record) kinds :test #'eq))
             (or (null tool-name)
                 (string= (chariot-json:jref record "tool_name" "") tool-name))
+            (or (null run-id)
+                (string= (chariot-json:jref record "run_id" "") run-id))
             (or (not error-p-given)
                 (eq (%record-bool (chariot-json:jref record "error_p" :null))
                     (and error-p t)))

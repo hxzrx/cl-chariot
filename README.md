@@ -27,6 +27,7 @@ agent loop, a tool system, approval policies and session persistence. It can be
 | Run control | Cooperative cancellation (`:cancel-token`, settable from any thread) and wall-clock timeout (`:timeout`); `:cancelled`/`:timeout` stop reasons with messages preserved and resumable; nested runs (subagents) inherit the cancellation signal and deadline automatically |
 | Concurrency contract | Immutable value-object configs are shareable across threads; one agent can run concurrently on many threads; session writes are thread-safe (line-integral JSONL, unique sequence numbers) plus a "one writer per session file" contract; event callbacks only fire synchronously on the run thread — all enforced by a dedicated concurrency suite |
 | Goal verification | Programmable `:verify-callback` gate: forces a re-verification before natural completion, downgrades to `:unverified` on failure (fail-closed, off by default) |
+| Run identity | Every `run` gets a unique run-id stamped on all its events and session records (nested runs carry a parent id) — hosts can align logs, billing and audits per run; `session-filter :run-id` scopes records to one run, `session-runs` summarizes per run |
 | Session persistence | JSONL event stream; messages and all run events (with sequence numbers) mirrored to disk; projection/replay at any point, prefix-fork resume, and log search; the "everything the model saw is recorded" invariant; meta carries a config-digest fingerprint; crash-tolerant loading; resume from past conversations |
 | Cost governance | Per-run `:max-total-tokens` budget guardrail; `session-usage-report` aggregates token usage across sessions, days and models (usage after a failover is attributed to the switched-to model); provider-level failover limits losses |
 | Context management | CJK-aware token estimation; summarize-then-trim when over budget (programmable `:compaction-fn`, auto-degrades on failure); never produces orphan tool messages; compactions are recorded via `:compact`/`:summarize` events |
@@ -130,7 +131,7 @@ See [demo/README.md](demo/README.md).
 ### 4. Run the Tests
 
 ```bash
-tests/run.sh                          # full offline suite (1081 assertions)
+tests/run.sh                          # full offline suite (1109 assertions)
 CHARIOT_LIVE=1 tests/run.sh               # plus live tests (needs API keys)
 ```
 

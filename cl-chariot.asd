@@ -60,8 +60,8 @@
   :components ((:file "packages")
                (:file "context")
                (:file "permission")
-               (:file "session")
                (:file "cancel")
+               (:file "session")
                (:file "agent")))
 
 (defsystem "cl-chariot/mcp"
@@ -106,6 +106,7 @@
                (:file "agent-test")
                (:file "concurrency-test")
                (:file "cost-test")
+               (:file "runid-test")
                (:file "mcp-test")
                (:file "mcp-http-test")
                (:file "session-test")
