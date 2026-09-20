@@ -30,7 +30,7 @@ jobs:
             sudo apt-get install -y sbcl
           else
             curl -L -o /tmp/ccl.tar.gz \
-              https://github.com/Clozure/ccl/releases/download/v1.12.1/ccl-1.12.1-linuxx86.tar.gz
+              https://github.com/Clozure/ccl/releases/download/v1.13/ccl-1.13-linuxx86.tar.gz
             sudo mkdir -p /opt/ccl
             sudo tar xzf /tmp/ccl.tar.gz -C /opt/ccl --strip-components=1
             sudo ln -s /opt/ccl/lx86cl64 /usr/local/bin/ccl
