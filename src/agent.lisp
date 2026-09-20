@@ -87,6 +87,10 @@ PARALLEL-TOOLS    一轮工具调用全部只读时是否并行执行(默认 T)�
                   置 NIL 恢复全顺序执行。见 EXECUTE-TOOL-CALLS;
 SESSION-FILE      会话 JSONL 文件路径;NIL 表示不持久化;
 CHAT-FN           模型调用注入点(见 CALL-CHAT);
+FALLBACK-PROVIDERS  后备 Provider 链(默认空)。主 Provider 出现模型接入层
+                  故障(重试耗尽的 api-error/transport-error、api-key-missing、
+                  空回复)时,依次改由后备重试同一请求;切换经 :PROVIDER-SWITCH
+                  事件留痕。见 CALL-CHAT;
 TEMPERATURE/MAX-TOKENS  覆盖 Provider 默认采样参数;
 MAX-TOTAL-TOKENS        单次运行累计 token 预算,超限即停(:BUDGET);NIL 不限。"
   (provider nil)
@@ -105,6 +109,7 @@ MAX-TOTAL-TOKENS        单次运行累计 token 预算,超限即停(:BUDGET);NI
   (parallel-tools t)
   (session-file nil)
   (chat-fn nil)
+  (fallback-providers '())
   (temperature nil)
   (max-tokens nil)
   (max-total-tokens nil))
@@ -115,14 +120,16 @@ MAX-TOTAL-TOKENS        单次运行累计 token 预算,超限即停(:BUDGET);NI
                                     ask-callback verify-callback on-event
                                     trim-tokens compaction-fn
                                     (parallel-tools t)
-                                    session-file chat-fn temperature max-tokens
+                                    session-file chat-fn fallback-providers
+                                    temperature max-tokens
                                     max-total-tokens)
   "构造智能体配置。所有参数见 AGENT 结构文档。
 最小用法:(make-agent :provider (chariot-llm:make-provider :deepseek))。"
   (declare (ignore provider tools system-prompt max-turns max-identical-turns
                    permission-mode allowed-tools disallowed-tools ask-callback
                    verify-callback on-event trim-tokens compaction-fn
-                   parallel-tools session-file chat-fn temperature max-tokens
+                   parallel-tools session-file chat-fn fallback-providers
+                   temperature max-tokens
                    max-total-tokens))
   (apply #'%make-agent keys))
 
@@ -199,6 +206,11 @@ MAX-TOTAL-TOKENS        单次运行累计 token 预算,超限即停(:BUDGET);NI
                              (cons "reason" (getf event :reason))))
                       (:cancel
                        (list (cons "reason" (kw (getf event :reason)))))
+                      (:provider-switch
+                       (list (cons "from" (kw (getf event :from)))
+                             (cons "to" (kw (getf event :to)))
+                             (cons "model" (getf event :model))
+                             (cons "reason" (getf event :reason))))
                       (:run-end
                        (list (cons "stop_reason" (kw (getf event :stop-reason)))
                              (cons "turns" (getf event :turns))
@@ -253,7 +265,13 @@ TURNS         实际执行的 LLM 调用轮数。"
 
 (defun call-chat (agent messages)
   "经由智能体的注入点调用模型,并把流式增量转换为事件。
-返回 (VALUES assistant消息 usage finish-reason)。"
+配置了 :FALLBACK-PROVIDERS 时,主 Provider 出现模型接入层故障
+(CHARIOT-LLM:LLM-ERROR 子类——重试耗尽的 api-error/transport-error、
+api-key-missing、空回复)则依次改由后备 Provider 重试同一请求,
+每次切换经 :PROVIDER-SWITCH 事件留痕;全部失败时向上传播最后一次错误。
+返回 (VALUES assistant消息 usage finish-reason)。
+注意:与 Provider 层重试同理,失败尝试已交付的流式增量不撤回,
+事件消费方可能看到重复片段(最终 assistant 消息总是完整一致的)。"
   (let* ((tools (mapcar #'chariot-tools:tool-json-schema (agent-tools agent)))
          (fn (or (agent-chat-fn agent) #'default-chat-fn))
          (on-delta (when (agent-on-event agent)
@@ -263,12 +281,29 @@ TURNS         实际执行的 LLM 调用轮数。"
                                                  (:text :text-delta)
                                                  (:reasoning :reasoning-delta))
                                          :text text))))))
-    (funcall fn (agent-provider agent) messages
-             :tools (if tools tools nil)
-             :stream t
-             :on-delta on-delta
-             :temperature (agent-temperature agent)
-             :max-tokens (agent-max-tokens agent))))
+    (labels ((call-one (provider)
+               (funcall fn provider messages
+                        :tools (if tools tools nil)
+                        :stream t
+                        :on-delta on-delta
+                        :temperature (agent-temperature agent)
+                        :max-tokens (agent-max-tokens agent))))
+      (let ((chain (cons (agent-provider agent)
+                         (agent-fallback-providers agent))))
+        (loop for provider in chain
+              for rest = (rest chain) then (rest rest)
+              do (handler-case
+                     (return-from call-chat (call-one provider))
+                   (llm-error (e)
+                     (let ((next (first rest)))
+                       (if (null next)
+                           (error e)   ; 链耗尽:最后一次错误向上传播
+                           (emit-event agent
+                                       (list :kind :provider-switch
+                                             :from (provider-name provider)
+                                             :to (provider-name next)
+                                             :model (provider-model next)
+                                             :reason (format nil "~A" e))))))))))))
 
 ;;; ---------------------------------------------------------------------------
 ;;; 内部:工具调用执行
@@ -309,6 +344,9 @@ TURNS         实际执行的 LLM 调用轮数。"
                  (cons "verify_gate" (if (agent-verify-callback agent) :true :false))
                  (cons "compaction_fn" (if (agent-compaction-fn agent) :true :false))
                  (cons "parallel_tools" (if (agent-parallel-tools agent) :true :false))
+                 (cons "fallbacks" (or (mapcar #'chariot-llm:provider-model
+                                               (agent-fallback-providers agent))
+                                       :null))
                  (cons "tools" (or tool-names '()))
                  (cons "system_prompt_digest" (fnv-1a-hex prompt)))))
     (append cells
@@ -539,6 +577,7 @@ MAX-TURNS 覆盖配置中的轮数上限。
 
 事件序列(:KIND 键):
   :RUN-START(:PROMPT) → {:TURN-START(:TURN) → :TEXT-DELTA/:REASONING-DELTA(:TEXT)
+  → [:PROVIDER-SWITCH(:FROM :TO :MODEL :REASON)]
   → :ASSISTANT-MESSAGE(:MESSAGE) → :TOOL-CALL(:TOOL-NAME :ARGUMENTS :CALL-ID)
   → [:PERMISSION-DENIED] → :TOOL-RESULT(:RESULT :ERROR-P :DURATION)
   → [:COMPACT(:ELIDED-MESSAGES :ELIDED-TOKENS :BUDGET :HINT) |

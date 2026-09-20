@@ -3,6 +3,22 @@
 ## [未发布]
 
 ### 新增
+- **Provider 故障切换(`:fallback-providers`)**:主 Provider 出现模型接入层
+  故障(`llm-error` 子类——重试耗尽的 api-error/transport-error、
+  api-key-missing、空回复)时,依次改由后备 Provider 重试同一请求;
+  全部失败向上传播最后一次错误,非模型层错误不触发切换。
+  - 新事件 `:provider-switch`(`:from :to :model :reason`),随事件流镜像
+    入会话日志,`session-record->event` 无损还原;
+  - `config-digest` 新增 `fallbacks` 字段(后备模型清单);
+  - 与 Provider 层重试同理:失败尝试已交付的流式增量不撤回,事件消费方
+    可能看到重复片段(最终 assistant 消息总是完整一致的);
+  - 设计记录见 ADR #13:重试属于同一服务的瞬时故障(Provider 层),
+    切换属于服务不可用的替代路由(调用编排层,挂在 CALL-CHAT)。
+- **跨运行用量报告(`session-usage-report`)**:聚合一个或多个会话文件的
+  token 用量,返回 `runs / total / by_model / by_day` 分桶报告(按桶键排序,
+  结果确定)。归属规则:usage 记录按自身 ts 归入日期桶;模型归属跟随最近一次
+  meta 记录与 `:provider-switch` 镜像——多运行混合模型与运行中切换都能
+  正确归属。金额估算不在库内(价格随厂商变动),宿主可在报告之上叠加价目表。
 - **协作式取消与运行超时**(生产控制面):`run` 新增 `:cancel-token` 与
   `:timeout`;取消令牌为线程安全置位开关(`make-cancel-token` /
   `request-cancel` / `cancel-requested-p` / `cancel-reason`,任意线程可
@@ -18,7 +34,7 @@
     获得同样的取消上下文;
   - `run-prompt` 同步接受 `:cancel-token` / `:timeout`。
 - **并发契约(有承诺、被测试)**:新增 `concurrency-suite`(13 项测试,
-  98 项断言),固化以下承诺——
+  98 项断言)与 `cost-suite`(10 项测试,36 项断言),固化以下承诺——
   - agent / provider / tool 为不可变值对象,可跨线程共享,同一 agent
     可被多线程同时 `run` 互不串扰;
   - 会话落盘线程安全:`session-record` 经全局写锁完成序号分配与单行

@@ -138,6 +138,7 @@ grep-files / run-command / fetch-url)见 `src/world.lisp` 头注与
 | `:trim-tokens` | NIL | 上下文预算;NIL 不裁剪 |
 | `:session-file` | NIL | JSONL 路径;非 NIL 即启用持久化(含事件镜像与配置摘要,见 §6) |
 | `:chat-fn` | 库默认 | `(lambda (provider messages &rest opts))` 注入点 |
+| `:fallback-providers` | `'()` | 后备 Provider 链(见下方「故障切换」) |
 
 ### 目标验证门(:verify-callback)
 
@@ -170,6 +171,27 @@ grep-files / run-command / fetch-url)见 `src/world.lisp` 头注与
 (chariot-agent:build-summary-message summary-text elided elided-tokens) ; → 合成 user 消息
 (chariot-agent:splice-summary trim-result hint summary-message)         ; → 新请求序列
 ```
+
+### 故障切换(:fallback-providers)
+
+主 Provider 出现模型接入层故障(`chariot-llm:llm-error` 子类——重试耗尽的
+`api-error`/`transport-error`、`api-key-missing`、空回复)时,依次改由后备
+Provider 重试同一请求;全部失败向上传播最后一次错误:
+
+```lisp
+(chariot:make-agent
+  :provider (chariot-llm:make-provider :deepseek)
+  :fallback-providers (list (chariot-llm:make-provider :glm)      ; 首选后备
+                             (chariot-llm:make-provider :qwen))   ; 次选
+  ...)
+```
+
+- 每次切换发 `:provider-switch` 事件(`:from :to :model :reason`),随事件流
+  镜像入会话日志;`config-digest` 携带后备模型清单(`fallbacks` 字段);
+- 与 Provider 层重试同理,失败尝试已交付的流式增量不撤回,事件消费方可能
+  看到重复片段(最终 assistant 消息总是完整一致的);
+- 非模型接入层错误(程序缺陷)不触发切换,立即传播;
+- 用量归属:`session-usage-report` 把切换后的用量计入切换后的模型。
 
 ### run / run-prompt
 
@@ -252,6 +274,7 @@ grep-files / run-command / fetch-url)见 `src/world.lisp` 头注与
 | `:summarize` | `:turn :elided-messages :elided-tokens :summary-message :usage` / `:failed-p :reason` | 摘要压缩发生时(成功带摘要消息与折叠用量;失败带原因并降级纯裁剪) |
 | `:stall` | `:turn :streak :signature` | 连续相同工具调用达到上限、即将止损时 |
 | `:cancel` | `:reason`(`:requested` / `:timeout`) | 取消/超时收场时(`:run-end` 之前) |
+| `:provider-switch` | `:from :to :model :reason` | 故障切换到后备 Provider 时 |
 | `:verify` | `:passed-p :reason` | 目标验证门判定后(配置了 `:verify-callback` 时) |
 | `:run-end` | `:stop-reason :turns :usage` | 运行结束 |
 
@@ -328,6 +351,23 @@ meta 记录另携带 `config-digest` 的**配置摘要**(轮数/审批模式/工
 每条带会话文件的脚本化运行强制执行该不变量。分叉文件上的派生用法:`session-fork` 复制前缀记录
 并追加 `fork` 标记(来源与截取点),配合 `:messages` 投影即可像 git 分支
 一样做止损重试、what-if 对比与回归留存。
+
+### 跨运行用量报告(session-usage-report)
+
+```lisp
+(chariot-agent:session-usage-report "run.jsonl")          ; 单文件
+(chariot-agent:session-usage-report '("a.jsonl" "b.jsonl")) ; 跨会话汇总
+;; → (:obj ("runs" . 2) ("total" . <用量>)
+;;         ("by_model" . ((:obj ("model" . "glm-5.3") ("usage" . <用量>)) …))
+;;         ("by_day"   . ((:obj ("day" . "2026-09-20") ("usage" . <用量>)) …)))
+```
+
+成本治理的取数层:聚合一个或多个会话文件的 token 用量,按模型与日期分桶
+(均按桶键排序,结果确定)。归属规则:usage 记录按其自身 `ts` 归入日期桶;
+模型归属取「最近一次 meta 记录或 `:provider-switch` 镜像声明的模型」——
+同一会话内多次运行、以及配置了 `:fallback-providers` 的运行中途切换,
+用量都能正确归属;`runs` 为 meta 记录数(每次 `run` 启动补写一条)。
+金额估算不在库内(价格随厂商变动),宿主可在报告之上叠加价目表。
 
 ## 7. 错误处理
 

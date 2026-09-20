@@ -28,13 +28,14 @@ LOG 为可选 cons 单元(收集每次调用收到的消息序列),供断言使�
                         &key tools permission-mode on-event max-turns system-prompt
                           allowed-tools disallowed-tools ask-callback
                           trim-tokens compaction-fn parallel-tools session-file
-                          max-total-tokens max-identical-turns verify-callback)
+                          max-total-tokens max-identical-turns verify-callback
+                          fallback-providers)
   "构造用于循环测试的智能体(provider 为占位配置,不会被调用)。
 未显式给出的参数使用与生产一致的默认(全部内置工具、yolo 模式等)。"
   (declare (ignore permission-mode on-event max-turns system-prompt
                    allowed-tools disallowed-tools ask-callback trim-tokens
                    compaction-fn parallel-tools session-file max-total-tokens
-                   max-identical-turns verify-callback))
+                   max-identical-turns verify-callback fallback-providers))
   (let* ((given-keys (loop for rest-plist on extra by #'cddr
                            collect (first rest-plist)))
          (defaults (append

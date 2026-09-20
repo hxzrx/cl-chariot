@@ -14,7 +14,7 @@ DeepSeek / Qwen / GLM / OpenAI 等多种大模型,提供可编程的智能体主
 
 | 能力 | 说明 |
 |---|---|
-| 多厂商 Provider | 内置 DeepSeek / Qwen(通义百炼)/ GLM(智谱)/ OpenAI 预设,任意 OpenAI 兼容端点均可接入 |
+| 多厂商 Provider | 内置 DeepSeek / Qwen(通义百炼)/ GLM(智谱)/ OpenAI 预设,任意 OpenAI 兼容端点均可接入;`:fallback-providers` 故障切换链:主服务故障时自动改由后备重试,`:provider-switch` 事件留痕 |
 | 流式输出 | SSE 流式解析,文本/思考(reasoning)增量经事件回调逐段交付 |
 | 智能体主循环 | 「模型 → 工具调用 → 结果回喂」多轮循环;轮数/上下文/成本/循环停滞四重护栏;整轮只读工具并行执行(事件与消息顺序保持确定) |
 | 工具系统 | `define-tool` 声明式定义工具;自动生成 JSON Schema;内置 bash/read/write/edit/glob/grep/web-fetch 七件;执行世界 seam(`make-builtin-tools :world`)把文件/进程/网络访问与工具面分离,可注入路径受限世界 |
@@ -24,6 +24,7 @@ DeepSeek / Qwen / GLM / OpenAI 等多种大模型,提供可编程的智能体主
 | 并发契约 | 值语义配置对象可跨线程共享,同一智能体可多线程并发运行;会话落盘线程安全(行完整、序号唯一)+「单文件单写者」契约;事件回调仅在运行线程同步调用——以上均有并发套件强制执行 |
 | 目标验证 | 可编程 `:verify-callback` 验证门:自然结束前强制复验,失败降级 `:unverified`(fail-closed,缺省关闭) |
 | 会话持久化 | JSONL 事件流;消息与全部运行事件(含序号)镜像落盘;任意点投影回放、前缀分叉续跑与日志检索;「模型可见即已记录」不变量;meta 携带配置摘要指纹;崩溃容忍加载;支持从历史对话续跑 |
+| 成本治理 | 单运行 `:max-total-tokens` 预算护栏;`session-usage-report` 跨会话/跨天/按模型聚合 token 用量(切换后归属切换模型);provider 级故障切换止损 |
 | 上下文管理 | CJK 感知的 token 估算;超预算先摘要后裁剪(`:compaction-fn` 可编程折叠,失败自动降级);保证不产生孤儿工具消息;压缩经 `:compact`/`:summarize` 事件留痕 |
 | 错误韧性 | 工具失败回喂模型继续;HTTP 429/5xx 与空回复指数退避重试;连续相同工具调用自动止损(`:stalled`);重试耗尽信号结构化条件 |
 | 子智能体 | 一行代码把受限子智能体封装为工具,用于分派独立子任务 |
@@ -124,7 +125,7 @@ demo/run.sh          # 依次运行三个渐进式示例
 ### 4. 运行测试
 
 ```bash
-tests/run.sh                          # 离线全量测试(1045 项断言)
+tests/run.sh                          # 离线全量测试(1081 项断言)
 CHARIOT_LIVE=1 tests/run.sh               # 附加真机联调(需 API Key)
 ```
 

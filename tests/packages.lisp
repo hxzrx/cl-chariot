@@ -82,6 +82,7 @@
    #:agent-parallel-tools
    #:make-cancel-token #:cancel-token-p #:cancel-requested-p #:request-cancel
    #:cancel-reason #:cancel-token-lock #:cancel-token-cancelled-p
+   #:agent-fallback-providers #:session-usage-report
    #:emit-event)
   (:import-from :bordeaux-threads
    #:make-thread #:join-thread #:make-lock #:with-lock-held

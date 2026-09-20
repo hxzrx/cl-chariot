@@ -158,6 +158,73 @@ PROVIDER 提供 provider/model;CONFIG-CELLS(可选)为 CONFIG-DIGEST 返回的
                                                       (chariot-llm:zero-usage))))))))
 
 ;;; ---------------------------------------------------------------------------
+;;; 跨运行用量报告(成本治理)
+;;; ---------------------------------------------------------------------------
+
+(defun %universal-day (universal-time)
+  "通用时间 → \"YYYY-MM-DD\"(本地时区);非法值返回 NIL。"
+  (handler-case
+      (multiple-value-bind (sec min hour date month year dow dst-p zone)
+          (decode-universal-time universal-time)
+        (declare (ignore sec min hour dow dst-p zone))
+        (format nil "~4,'0D-~2,'0D-~2,'0D" year month date))
+    (error () nil)))
+
+(defun session-usage-report (paths)
+  "聚合一个或多个会话文件的 token 用量,返回报告 :OBJ:
+  (\"runs\" . 运行次数) (\"total\" . <用量对象>)
+  (\"by_model\" . ((:obj (\"model\" . 模型) (\"usage\" . <用量>)) … 按模型名排序))
+  (\"by_day\"   . ((:obj (\"day\" . \"YYYY-MM-DD\") (\"usage\" . <用量>)) … 按日期排序))
+归属规则:usage 记录按其自身 ts 归入日期桶;模型归属取「最近一次 meta
+记录或 :provider-switch 镜像声明的模型」——同一会话内多次运行、以及
+配置了 :FALLBACK-PROVIDERS 的运行中途切换,用量都能正确归属。
+runs 为 meta 记录数(每次 RUN 启动补写一条)。
+PATHS 为会话文件路径字符串或其列表(跨会话/跨天汇总)。"
+  (let ((path-list (etypecase paths
+                     ((or string pathname) (list paths))
+                     (list paths)))
+        (runs 0)
+        (current-model nil)
+        (total (chariot-llm:zero-usage))
+        (by-model (make-hash-table :test #'equal))
+        (by-day (make-hash-table :test #'equal)))
+    (flet ((bucket-add (table key usage)
+             (setf (gethash key table)
+                   (chariot-llm:add-usage
+                    (gethash key table (chariot-llm:zero-usage)) usage)))
+           (buckets (table key-name)
+             (sort (loop for key being each hash-key of table
+                         using (hash-value usage)
+                         collect `(:obj (,key-name . ,key) ("usage" . ,usage)))
+                   #'string<
+                   :key (lambda (bucket) (chariot-json:jref bucket key-name)))))
+      (dolist (path path-list)
+        (multiple-value-bind (records corrupt)
+            (session-load path)
+          (declare (ignore corrupt))
+          (dolist (record records)
+            (case (session-record-kind record)
+              (:meta
+               (incf runs)
+               (setf current-model (chariot-json:jref record "model")))
+              (:provider-switch
+               ;; 故障切换后的用量归属切换后的模型
+               (setf current-model (chariot-json:jref record "model")))
+              (:usage
+               (let* ((usage (chariot-json:jref record "usage"
+                                               (chariot-llm:zero-usage)))
+                      (day (%universal-day (chariot-json:jref record "ts"))))
+                 (setf total (chariot-llm:add-usage total usage))
+                 (bucket-add by-model (or current-model "?") usage)
+                 (when day
+                   (bucket-add by-day day usage))))))))
+      `(:obj
+        ("runs" . ,runs)
+        ("total" . ,total)
+        ("by_model" . ,(buckets by-model "model"))
+        ("by_day" . ,(buckets by-day "day"))))))
+
+;;; ---------------------------------------------------------------------------
 ;;; 记录取值
 ;;; ---------------------------------------------------------------------------
 
@@ -271,6 +338,12 @@ PROVIDER 提供 provider/model;CONFIG-CELLS(可选)为 CONFIG-DIGEST 返回的
       (:cancel
        (list :kind :cancel
              :reason (%kind-keyword (funcall ref "reason"))))
+      (:provider-switch
+       (list :kind :provider-switch
+             :from (%kind-keyword (funcall ref "from"))
+             :to (%kind-keyword (funcall ref "to"))
+             :model (funcall ref "model")
+             :reason (funcall ref "reason")))
       (:run-end
        (list :kind :run-end
              :stop-reason (%kind-keyword (funcall ref "stop_reason"))

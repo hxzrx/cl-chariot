@@ -15,7 +15,7 @@
   (let* ((live-p (or include-live-p (equal (uiop:getenv "CHARIOT_LIVE") "1")))
          (suite-names
            (append '(util-suite json-suite message-suite provider-suite
-                     tool-suite agent-suite concurrency-suite
+                     tool-suite agent-suite concurrency-suite cost-suite
                      mcp-suite mcp-http-suite
                      session-suite cli-suite mcp-live-suite)
                    (when live-p '(live-suite))))

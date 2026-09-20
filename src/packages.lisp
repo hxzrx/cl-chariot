@@ -206,6 +206,7 @@ HTTP 传输通过动态变量 *http-post-fn* 注入,便于测试与替换。")
    #:agent-parallel-tools
    #:agent-session-file
    #:agent-chat-fn
+   #:agent-fallback-providers
    #:agent-temperature
    #:agent-max-tokens
    #:agent-max-total-tokens
@@ -258,6 +259,8 @@ HTTP 传输通过动态变量 *http-post-fn* 注入,便于测试与替换。")
    #:session-count-records
    #:session-load
    #:session-messages
+   #:session-usage-total
+   #:session-usage-report
    ;; 会话回放 / 审计 / 检索 / 分叉 / 不变量
    #:session-record-kind
    #:session-record-seq

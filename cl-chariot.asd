@@ -105,6 +105,7 @@
                (:file "tool-test")
                (:file "agent-test")
                (:file "concurrency-test")
+               (:file "cost-test")
                (:file "mcp-test")
                (:file "mcp-http-test")
                (:file "session-test")
