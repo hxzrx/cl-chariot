@@ -228,6 +228,37 @@ HTTP 传输通过动态变量 *http-post-fn* 注入,便于测试与替换。")
    #:cancel-requested-p
    #:request-cancel
    #:cancel-reason
+   ;; 策略工件(Policy Pack)
+   #:policy
+   #:policy-p
+   #:make-policy
+   #:policy-version
+   #:policy-system-prompt
+   #:policy-max-turns
+   #:policy-max-identical-turns
+   #:policy-trim-tokens
+   #:policy-max-total-tokens
+   #:policy-temperature
+   #:policy-max-tokens
+   #:policy->json
+   #:json->policy
+   #:policy-digest
+   #:save-policy
+   #:load-policy
+   #:apply-policy
+   #:policy-from-agent
+   ;; 评测跑批(Eval Harness)
+   #:eval-task
+   #:eval-task-p
+   #:make-eval-task
+   #:eval-task-id
+   #:eval-task-prompt
+   #:eval-task-check
+   #:run-eval
+   #:eval-load
+   #:eval-batch-rows
+   #:eval-summary
+   #:eval-diff
    ;; 事件
    #:emit-event
    ;; 默认提示词
@@ -375,7 +406,9 @@ HTTP 的 GET 长监听流、OAuth 2.1。")
    #:result-text #:result-usage #:result-stop-reason #:result-turns
    #:result-messages #:result-run-id #:emit-event #:usage-total-tokens
    #:make-cancel-token #:cancel-token-p #:cancel-requested-p #:request-cancel
-   #:cancel-reason)
+   #:cancel-reason
+   #:make-policy #:apply-policy #:policy-digest #:policy-from-agent
+   #:make-eval-task #:run-eval #:eval-load #:eval-summary #:eval-diff)
   (:export
    ;; 版本
    #:+version+
@@ -410,6 +443,14 @@ HTTP 的 GET 长监听流、OAuth 2.1。")
    #:cancel-requested-p
    #:request-cancel
    #:cancel-reason
+   ;; 策略与评测
+   #:make-policy
+   #:apply-policy
+   #:policy-digest
+   #:make-eval-task
+   #:run-eval
+   #:eval-summary
+   #:eval-diff
    ;; 消息
    #:make-user-message
    #:make-system-message

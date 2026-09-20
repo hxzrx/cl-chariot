@@ -28,6 +28,7 @@ DeepSeek / Qwen / GLM / OpenAI 等多种大模型,提供可编程的智能体主
 | 运行标识 | 每次 `run` 生成唯一 run-id,盖章到该运行全部事件与会话记录(嵌套运行携带父标识)——宿主的日志、计费与审计可按运行对齐;`session-filter :run-id` 按运行圈定记录,`session-runs` 按运行汇总 |
 | 会话持久化 | JSONL 事件流;消息与全部运行事件(含序号)镜像落盘;运行边界轮转归档(`session-archive-runs`,原子重写)与跨会话运行索引(`session-index`) |任意点投影回放、前缀分叉续跑与日志检索;「模型可见即已记录」不变量;meta 携带配置摘要指纹;崩溃容忍加载;支持从历史对话续跑 |
 | 成本治理 | 单运行 `:max-total-tokens` 预算护栏;`session-usage-report` 跨会话/跨天/按模型聚合 token 用量(切换后归属切换模型);provider 级故障切换止损 |
+| 策略与评测 | 提示词/预算/采样打包为带版本与内容指纹的纯数据策略工件(`make-policy`/`apply-policy`/`policy-digest`);评测跑批按策略指纹落账、跨批次对比回归(`run-eval`/`eval-summary`/`eval-diff`)——调提示词成为可回归的工程行为 |
 | 上下文管理 | CJK 感知的 token 估算;超预算先摘要后裁剪(`:compaction-fn` 可编程折叠,失败自动降级);保证不产生孤儿工具消息;压缩经 `:compact`/`:summarize` 事件留痕 |
 | 错误韧性 | 工具失败回喂模型继续;HTTP 429/5xx 与空回复指数退避重试;连续相同工具调用自动止损(`:stalled`);重试耗尽信号结构化条件 |
 | 子智能体 | 一行代码把受限子智能体封装为工具,用于分派独立子任务 |
@@ -127,7 +128,7 @@ demo/run.sh          # 依次运行三个渐进式示例
 ### 4. 运行测试
 
 ```bash
-tests/run.sh                          # 离线全量测试(1144 项断言)
+tests/run.sh                          # 离线全量测试(1199 项断言)
 CHARIOT_LIVE=1 tests/run.sh               # 附加真机联调(需 API Key)
 ```
 
@@ -232,10 +233,9 @@ cl-chariot/
   边界,逻辑边界)+ `make-bwrap-world`(bubblewrap 进程隔离:只读基础
   系统、工作区绑定、默认无网络、IPC/PID/UTS 隔离,`bwrap-usable-p`
   预探测);容器编排等形态留作扩展(执行世界 seam 见 `src/world.lisp`);
-- **Policy pack(版本化配置工件)**——当出现以下任一场景时再建:维护多套
-  提示词/预算 profile、建立任务套件做 A/B 对比、或考虑自动化调优。届时配置
-  打包为纯数据(semver + 指纹,当前 `config-digest` 已提供摘要雏形),并遵循
-  「自动晋升只许动提示词/预算、动代码必须人工审批」的权限边界;
+- **Policy pack 扩展**——v1 核心(策略工件 + 评测跑批,见特性总览)已落地;
+  多 profile 管理与自动晋升流水线留作后续,遵循「自动晋升只许动提示词/预算、
+  动代码必须人工审批」的权限边界;
 - **Web UI**——事件流即协议,前端可独立建设。
 
 ## License

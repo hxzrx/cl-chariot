@@ -33,6 +33,22 @@
   - `session-events` 缺省排除 `:archive` 业务标记;`session-record->event`
     支持还原;
   - 新增 `scale-suite`(6 项测试,35 项断言)。
+- **策略工件与评测跑批**(P1 的第 6 项,收官):
+  - `make-policy` / `apply-policy` / `policy-from-agent`:提示词 + 预算
+    (max-turns / max-identical-turns / trim-tokens / max-total-tokens)+
+    采样(temperature / max-tokens)打包为不可变策略工件;NIL 字段应用时
+    不覆盖;接线字段(provider/工具/回调)不在策略内——「自动晋升只许动
+    提示词/预算、动代码必须人工审批」的权限边界有了承载物(ADR #16);
+  - `policy-digest`:内容指纹(规范化 :OBJ → JSON → FNV-1A),任一字段
+    (含 semver 版本)变化即变化;`policy->json` / `json->policy` /
+    `save-policy` / `load-policy` 纯函数往返与文件读写;
+  - `run-eval` / `eval-load` / `eval-batch-rows` / `eval-summary` /
+    `eval-diff`:任务套件(`make-eval-task`,判分器缺省按自然结束判定,
+    异常按不通过 fail-closed)× 策略指纹落账 JSONL 评测日志;每行携带
+    批次/任务/策略指纹/模型/run_id/通过标记/原因/停止原因/轮数/token/
+    耗时;按批次汇总(通过率/token/平均轮数),跨批次对比列出回归与
+    改进;`:cancel-token`/`:timeout` 透传;
+  - 新增 `policy-suite` + `eval-suite`(11 项测试,55 项断言)。
 
 ## [0.8.0] - 2026-09-20
 

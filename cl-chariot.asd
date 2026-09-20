@@ -62,7 +62,9 @@
                (:file "permission")
                (:file "cancel")
                (:file "session")
-               (:file "agent")))
+               (:file "agent")
+               (:file "policy")
+               (:file "eval")))
 
 (defsystem "cl-chariot/mcp"
   :description "CL-Chariot MCP 客户端:stdio 与 Streamable HTTP 传输、工具桥接(协议 2025-06-18)"
@@ -108,6 +110,7 @@
                (:file "cost-test")
                (:file "runid-test")
                (:file "scale-test")
+               (:file "policy-eval-test")
                (:file "mcp-test")
                (:file "mcp-http-test")
                (:file "session-test")

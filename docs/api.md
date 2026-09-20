@@ -546,3 +546,55 @@ REPL 中 `/mcp` 查看服务器状态、`/tools` 查看全部工具;完整细节
 
 **取消传播**:取消令牌与墙钟期限经动态绑定向嵌套运行(子智能体)继承,
 工作线程经词法捕获获得同样的上下文(见「取消与超时」)。
+
+## 10. 策略工件与评测跑批
+
+「调提示词」由此成为可回归的工程行为:策略(提示词 + 预算 + 采样)从接线中
+分离为带 semver 与内容指纹的纯数据;评测跑批按「任务套件 × 配置指纹」
+落账,跨批次对比找出回归。
+
+### 策略工件(Policy Pack)
+
+```lisp
+;; 定义:提示词/预算/采样(NIL = 应用时不覆盖);不含 provider/工具/回调
+(chariot:make-policy :version "1.1.0"
+                     :system-prompt "你是严谨的助手……"
+                     :max-turns 30 :trim-tokens 60000
+                     :max-total-tokens 200000 :temperature 0.2)
+
+(chariot:apply-policy agent policy)   ; → 新智能体(纯函数;NIL 字段不动)
+(chariot:policy-from-agent agent)     ; → 基线快照(版本 "captured")
+(chariot:policy-digest policy)        ; 内容指纹(同内容跨进程一致)
+(chariot-agent:save-policy path policy) / (chariot-agent:load-policy path)
+```
+
+指纹对任一字段(含版本)变化敏感——「当时跑的是哪份配置」由指纹回答,
+与 `config-digest` 的审计语义互补(后者覆盖运行时全量接线)。
+
+### 评测跑批(Eval Harness)
+
+```lisp
+(defparameter *suite*
+  (list (chariot:make-eval-task
+         :id "count-files" :prompt "统计当前目录的 .lisp 文件数"
+         :check (lambda (result)
+                  ;; 非 NIL 通过;可返回第二值作为原因
+                  (search "7" (chariot:result-text result))))))
+
+;; 基线批次与调优批次落账到同一评测日志(可增量累积)
+(chariot:run-eval (chariot:apply-policy agent policy-v1) *suite*
+                  :log "eval.jsonl" :batch "v1")
+(chariot:run-eval (chariot:apply-policy agent policy-v2) *suite*
+                  :log "eval.jsonl" :batch "v2")
+
+;; 汇总(按批次:policy 指纹/通过率/token/平均轮数)与对比
+(chariot:eval-summary (chariot:eval-load "eval.jsonl"))
+(chariot:eval-diff (chariot-agent:eval-batch-rows rows "v1")
+                   (chariot-agent:eval-batch-rows rows "v2"))
+;; → (:obj ("regressed" . (…)) ("improved" . (…)) ("stable_pass" . n) …)
+```
+
+- 每行评测结果携带:批次、任务 id、**策略指纹**、模型、**run_id**、
+  通过标记、原因、停止原因、轮数、token、耗时——可回溯到完整会话上下文;
+- 判分器缺省以自然结束(`:end`)为通过;判分器异常按不通过(fail-closed)
+  并留痕;`:cancel-token`/`:timeout` 透传,取消后剩余任务照常记录。

@@ -85,6 +85,15 @@
    #:agent-fallback-providers #:session-usage-report
    #:result-run-id #:session-runs #:session-record-run-id
    #:session-archive-runs #:session-index
+   #:make-policy #:policy-digest #:policy->json #:json->policy
+   #:save-policy #:load-policy #:apply-policy #:policy-from-agent
+   #:policy-system-prompt #:policy-max-turns #:policy-trim-tokens
+   #:policy-temperature #:policy-max-total-tokens
+   #:agent-system-prompt #:agent-max-turns #:agent-trim-tokens
+   #:agent-temperature #:agent-max-identical-turns #:agent-provider
+   #:agent-tools
+   #:make-eval-task #:run-eval #:eval-load #:eval-batch-rows
+   #:eval-summary #:eval-diff
    #:emit-event)
   (:import-from :bordeaux-threads
    #:make-thread #:join-thread #:make-lock #:with-lock-held

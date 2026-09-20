@@ -30,6 +30,7 @@ agent loop, a tool system, approval policies and session persistence. It can be
 | Run identity | Every `run` gets a unique run-id stamped on all its events and session records (nested runs carry a parent id) — hosts can align logs, billing and audits per run; `session-filter :run-id` scopes records to one run, `session-runs` summarizes per run |
 | Session persistence | JSONL event stream; messages and all run events (with sequence numbers) mirrored to disk; run-boundary rotation/archival (`session-archive-runs`, atomic rewrite) and a cross-session run index (`session-index`) | projection/replay at any point, prefix-fork resume, and log search; the "everything the model saw is recorded" invariant; meta carries a config-digest fingerprint; crash-tolerant loading; resume from past conversations |
 | Cost governance | Per-run `:max-total-tokens` budget guardrail; `session-usage-report` aggregates token usage across sessions, days and models (usage after a failover is attributed to the switched-to model); provider-level failover limits losses |
+| Policy & eval | Prompts/budgets/sampling packed as versioned pure-data policy artifacts with content digests (`make-policy` / `apply-policy` / `policy-digest`); eval harness logs task-suite results keyed by policy fingerprint and diffs batches (`run-eval` / `eval-summary` / `eval-diff`) — prompt tuning becomes regression-testable engineering |
 | Context management | CJK-aware token estimation; summarize-then-trim when over budget (programmable `:compaction-fn`, auto-degrades on failure); never produces orphan tool messages; compactions are recorded via `:compact`/`:summarize` events |
 | Error resilience | Tool failures are fed back to the model and the loop continues; exponential backoff for HTTP 429/5xx and empty responses; automatic bail-out on repeated identical tool calls (`:stalled`); structured conditions on retry exhaustion |
 | Subagents | Wrap a restricted subagent as a tool in one line, for delegating independent subtasks |
@@ -131,7 +132,7 @@ See [demo/README.md](demo/README.md).
 ### 4. Run the Tests
 
 ```bash
-tests/run.sh                          # full offline suite (1144 assertions)
+tests/run.sh                          # full offline suite (1199 assertions)
 CHARIOT_LIVE=1 tests/run.sh               # plus live tests (needs API keys)
 ```
 
@@ -241,11 +242,9 @@ Capabilities not yet implemented, but with seams already reserved in the archite
   default, IPC/PID/UTS isolation, with a `bwrap-usable-p` pre-probe); container
   orchestration and similar forms are left as extensions (execution-world seam
   in `src/world.lisp`);
-- **Policy pack (versioned config artifacts)** — to be built when any of these
-  scenarios appears: maintaining multiple prompt/budget profiles, building task
-  suites for A/B comparison, or considering automated tuning. Configs would then
-  be packaged as pure data (semver + fingerprint; `config-digest` already
-  provides the embryonic digest), following the permission boundary "automated
+- **Policy pack extensions** — the v1 core has landed (policy artifacts +
+  eval harness, see above); multi-profile management and automated promotion
+  pipelines remain future work, following the permission boundary "automated
   promotion may only touch prompts/budgets; code changes require human approval";
 - **Web UI** — the event stream is the protocol; frontends can be built
   independently.
