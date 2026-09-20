@@ -62,7 +62,7 @@
    #:register-request-handler
    #:mcp-bridged-name #:mcp-content-text #:mcp-tools-from-server)
   (:import-from :chariot-agent
-   #:agent #:make-agent #:run-result
+   #:agent #:make-agent #:run-result #:run-prompt
    #:result-messages #:result-text #:result-usage #:result-stop-reason
    #:result-turns #:estimate-message-tokens #:estimate-messages-tokens
    #:trim-messages #:trim-messages-with-stats #:tool-calls-signature
@@ -80,7 +80,12 @@
    #:agent-compaction-fn #:default-compaction-fn
    #:+compaction-instruction+ #:build-summary-message #:splice-summary
    #:agent-parallel-tools
+   #:make-cancel-token #:cancel-token-p #:cancel-requested-p #:request-cancel
+   #:cancel-reason #:cancel-token-lock #:cancel-token-cancelled-p
    #:emit-event)
+  (:import-from :bordeaux-threads
+   #:make-thread #:join-thread #:make-lock #:with-lock-held
+   #:current-thread)
   (:import-from :chariot
    #:+version+ #:make-subagent-tool)
   (:import-from :chariot-cli

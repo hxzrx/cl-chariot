@@ -219,6 +219,13 @@ HTTP 传输通过动态变量 *http-post-fn* 注入,便于测试与替换。")
    #:result-usage
    #:result-stop-reason
    #:result-turns
+   ;; 取消与超时(协作式)
+   #:cancel-token
+   #:cancel-token-p
+   #:make-cancel-token
+   #:cancel-requested-p
+   #:request-cancel
+   #:cancel-reason
    ;; 事件
    #:emit-event
    ;; 默认提示词
@@ -358,7 +365,9 @@ HTTP 的 GET 长监听流、OAuth 2.1。")
    #:make-agent #:run #:run-prompt #:agent-provider #:agent-tools #:agent-max-turns
    #:agent-system-prompt #:agent-permission-mode #:agent-on-event
    #:result-text #:result-usage #:result-stop-reason #:result-turns
-   #:result-messages #:emit-event #:usage-total-tokens)
+   #:result-messages #:emit-event #:usage-total-tokens
+   #:make-cancel-token #:cancel-token-p #:cancel-requested-p #:request-cancel
+   #:cancel-reason)
   (:export
    ;; 版本
    #:+version+
@@ -386,6 +395,12 @@ HTTP 的 GET 长监听流、OAuth 2.1。")
    #:result-turns
    #:result-messages
    #:usage-total-tokens
+   ;; 取消与超时(协作式)
+   #:make-cancel-token
+   #:cancel-token-p
+   #:cancel-requested-p
+   #:request-cancel
+   #:cancel-reason
    ;; 消息
    #:make-user-message
    #:make-system-message

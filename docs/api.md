@@ -174,18 +174,45 @@ grep-files / run-command / fetch-url)见 `src/world.lisp` 头注与
 ### run / run-prompt
 
 ```lisp
-(chariot:run agent prompt &key messages max-turns) → RUN-RESULT
+(chariot:run agent prompt &key messages max-turns
+                    cancel-token timeout) → RUN-RESULT
 (chariot:run-prompt provider prompt &rest agent-keys) → RUN-RESULT  ; 一步式
 ```
 
 - `:messages` 给出时在既有对话上续跑(prompt 追加为新的 user 消息);
 - RUN-RESULT 访问器:`result-messages` `result-text` `result-usage`
   `result-stop-reason`(`:end` `:unverified` `:max-turns` `:length` `:budget`
-  `:stalled` `:empty`)`result-turns`;
+  `:stalled` `:empty` `:cancelled` `:timeout`)`result-turns`;
   - `:unverified`:目标验证门未通过(配置了 `:verify-callback` 且回调拒绝/异常);
   - `:stalled`:连续相同工具调用达到 `:max-identical-turns` 上限(循环瘫痪止损);
   - `:empty`:模型重试后仍返回空回复(消息保留,不产生条件);
+  - `:cancelled` / `:timeout`:取消令牌置位 / 墙钟超限(见下方「取消与超时」);
 - 用量对象:`(chariot-llm:usage-prompt-tokens u)` / `usage-completion-tokens` / `usage-total-tokens`。
+
+### 取消与超时(:cancel-token / :timeout)
+
+大型嵌入的运行控制面:`run` 接受取消令牌与墙钟时限,**协作式**生效——
+主循环在步骤之间(每轮开始前、每批工具执行前)检查;阻塞中的模型调用与
+工具执行**不被打断**,分别以 Provider 超时与工具自身超时为上界。不使用
+实现特定的线程中断,行为在 SBCL 与 CCL 上一致。
+
+```lisp
+(let ((token (chariot:make-cancel-token)))
+  (bt:make-thread (lambda ()
+                    (sleep 60)
+                    (chariot:request-cancel token "用户关闭页面")))  ; 任意线程可置位
+  (chariot:run agent "长任务" :cancel-token token :timeout 300))
+;; 停止原因 :cancelled(令牌置位)或 :timeout(墙钟超限);
+;; 已完成轮次的消息全部保留(可续跑/审计),已计划未执行的工具调用
+;; 编码为「[已取消]」失败结果;事件流追加 :cancel(:reason) 后 :run-end。
+```
+
+- `make-cancel-token` → 令牌;`request-cancel token &optional reason` 置位
+  (幂等,NIL 安全);`cancel-requested-p` / `cancel-reason` 查询;
+- `:timeout` 为正实数秒,自 `run` 起算的墙钟期限;
+- **嵌套继承**:子智能体等内层 `run` 未显式给出时,自动继承外层的令牌与
+  期限(期限取较早者)——取消外层运行同样止住内层工作,外层时间预算
+  同样约束内层。工作线程(只读工具并行执行)经词法捕获获得同样的上下文。
 
 ### 子智能体
 
@@ -224,6 +251,7 @@ grep-files / run-command / fetch-url)见 `src/world.lisp` 头注与
 | `:compact` | `:turn :elided-messages :elided-tokens :budget :hint` | 上下文实际裁剪时(只影响发送副本;`:hint` 为注入发送副本的省略提示消息,随事件入日志) |
 | `:summarize` | `:turn :elided-messages :elided-tokens :summary-message :usage` / `:failed-p :reason` | 摘要压缩发生时(成功带摘要消息与折叠用量;失败带原因并降级纯裁剪) |
 | `:stall` | `:turn :streak :signature` | 连续相同工具调用达到上限、即将止损时 |
+| `:cancel` | `:reason`(`:requested` / `:timeout`) | 取消/超时收场时(`:run-end` 之前) |
 | `:verify` | `:passed-p :reason` | 目标验证门判定后(配置了 `:verify-callback` 时) |
 | `:run-end` | `:stop-reason :turns :usage` | 运行结束 |
 
@@ -393,3 +421,27 @@ bin/cl-chariot --mcp "NAME=CMD[+ARG…]" --mcp "NAME=@URL[+TOKEN]" "任务"
 
 REPL 中 `/mcp` 查看服务器状态、`/tools` 查看全部工具;完整细节见
 [docs/mcp.md](mcp.md),真实 HTTPS 部署示例见 [mcp/README.md](../mcp/README.md)。
+
+## 9. 并发模型与契约
+
+多线程嵌入(会话并行、运行中取消、同一镜像内多租户)遵循以下契约,
+测试套件(`concurrency-suite`)对其强制执行:
+
+**可跨线程共享(不可变值对象)**:agent、provider、tool、内置工具表
+`+builtin-tools+`、事件回调。同一 agent 可被多个线程同时 `run`,
+互不串扰;`*http-post-fn*` 等动态注入点按线程绑定生效。
+
+**每次运行私有**:会话写入器与序号(`make-session-logger` 在 `run` 内部
+创建并经动态变量绑定)、取消令牌与墙钟期限(同上)。**一个会话文件
+同一时间只应有一个运行写入**——两个运行写同一文件会产生交错的历史,
+审计链失去意义;需要并行就给每个运行独立的 `:session-file`。
+
+**落盘线程安全(防御性)**:`session-record` / `session-append` 经全局写锁
+完成序号分配与单行追加——即使误用共享写入器,JSONL 行仍保持完整、
+序号仍唯一。
+
+**事件回调线程约定**:`on-event` 始终在**运行线程**上同步调用
+(工具并行执行只发生在无事件、无落盘的副作用阶段),回调异常被兜底忽略。
+
+**取消传播**:取消令牌与墙钟期限经动态绑定向嵌套运行(子智能体)继承,
+工作线程经词法捕获获得同样的上下文(见「取消与超时」)。

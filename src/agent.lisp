@@ -197,6 +197,8 @@ MAX-TOTAL-TOKENS        单次运行累计 token 预算,超限即停(:BUDGET);NI
                       (:verify
                        (list (cons "passed_p" (bool (getf event :passed-p)))
                              (cons "reason" (getf event :reason))))
+                      (:cancel
+                       (list (cons "reason" (kw (getf event :reason)))))
                       (:run-end
                        (list (cons "stop_reason" (kw (getf event :stop-reason)))
                              (cons "turns" (getf event :turns))
@@ -226,7 +228,7 @@ MESSAGES      完整消息序列(含初始 system/user 与最终全部轮次);
 TEXT          最后一条含文本的 assistant 消息(最终答复;可能为 NIL);
 USAGE         累计用量(:OBJ:prompt_tokens/completion_tokens/total_tokens);
 STOP-REASON   停止原因 :END / :UNVERIFIED / :MAX-TURNS / :BUDGET / :LENGTH
-              / :EMPTY / :STALLED;
+              / :EMPTY / :STALLED / :CANCELLED / :TIMEOUT;
 TURNS         实际执行的 LLM 调用轮数。"
   messages
   text
@@ -391,23 +393,27 @@ TURNS         实际执行的 LLM 调用轮数。"
 (defun run-tool-task (agent task)
   "执行单个已计划的任务:权限拒绝与未知工具在此编码为失败结果,
 工具调用失败同样不逃逸。无事件、无持久化——可在工作线程中运行;
-TASK 只被本线程写入(结果槽),主线程在汇合后读取。"
+TASK 只被本线程写入(结果槽),主线程在汇合后读取。
+取消协作:运行已请求取消(*CANCEL-TOKEN*)时不再启动本任务,
+直接编码为失败结果;进行中的任务不被打断,由其自身超时上界收场。"
   (let ((start (get-internal-real-time)))
     (multiple-value-bind (out err-p)
-        (let ((tool (tool-task-tool task)))
-          (cond ((null tool)
-                 (values (format nil "[工具错误] 未知工具:~A(可用:~{~A~^, ~})"
-                                 (tool-task-name task)
-                                 (mapcar #'chariot-tools:tool-name (agent-tools agent)))
-                         t))
-                ((not (tool-task-allowed-p task))
-                 (values (format nil "[权限拒绝] 工具 ~A 未能通过审批:~A"
-                                 (tool-task-name task)
-                                 (tool-task-deny-reason task))
-                         t))
-                (t (chariot-tools:execute-tool
-                    tool
-                    (chariot-msg:tool-call-args (tool-task-call task))))))
+        (if (cancel-requested-p *cancel-token*)
+            (values "[已取消] 运行已请求取消,本工具调用未执行" t)
+            (let ((tool (tool-task-tool task)))
+              (cond ((null tool)
+                     (values (format nil "[工具错误] 未知工具:~A(可用:~{~A~^, ~})"
+                                     (tool-task-name task)
+                                     (mapcar #'chariot-tools:tool-name (agent-tools agent)))
+                             t))
+                    ((not (tool-task-allowed-p task))
+                     (values (format nil "[权限拒绝] 工具 ~A 未能通过审批:~A"
+                                     (tool-task-name task)
+                                     (tool-task-deny-reason task))
+                             t))
+                    (t (chariot-tools:execute-tool
+                        tool
+                        (chariot-msg:tool-call-args (tool-task-call task)))))))
       (setf (tool-task-result task) out
             (tool-task-error-p task) err-p
             (tool-task-duration task)
@@ -454,11 +460,20 @@ TASK 只被本线程写入(结果槽),主线程在汇合后读取。"
                       (and (tool-task-tool task)
                            (chariot-tools:tool-readonly-p (tool-task-tool task))))
                     tasks))
-        (let ((threads (mapcar (lambda (task)
-                                 (bordeaux-threads:make-thread
-                                  (lambda () (run-tool-task agent task))
-                                  :name "chariot-tool"))
-                               tasks)))
+        (let* ((cancel-token *cancel-token*)
+               (run-deadline *run-deadline*)
+               (threads (mapcar (lambda (task)
+                                  ;; 取消上下文经词法捕获传入工作线程
+                                  ;; (动态绑定不随 bt:make-thread 传播);
+                                  ;; 会话写入器显式置 NIL——工作线程不落盘
+                                  (bordeaux-threads:make-thread
+                                   (lambda ()
+                                     (let ((*cancel-token* cancel-token)
+                                           (*run-deadline* run-deadline)
+                                           (*session-logger* nil))
+                                       (run-tool-task agent task)))
+                                   :name "chariot-tool"))
+                                 tasks)))
           (dolist (thread threads)
             (bordeaux-threads:join-thread thread)))
         (dolist (task tasks)
@@ -488,16 +503,37 @@ TASK 只被本线程写入(结果槽),主线程在汇合后读取。"
               (or (agent-system-prompt agent) +default-system-prompt+))
              (make-user-message (or prompt ""))))))
 
-(defun run (agent prompt &key messages max-turns)
+(defun %halt-run (agent halt messages text usage turns)
+  "以 HALT(:CANCELLED / :TIMEOUT)收场:发 :CANCEL 与 :RUN-END 事件,
+构造对应 RUN-RESULT。已完成的轮次全部保留在 MESSAGES(可续跑/审计)。"
+  (emit-event agent (list :kind :cancel
+                          :reason (if (eq halt :timeout) :timeout :requested)))
+  (let ((result (%make-run-result :messages messages :text text :usage usage
+                                  :stop-reason halt :turns turns)))
+    (emit-event agent (list :kind :run-end :stop-reason halt
+                            :turns turns :usage usage))
+    result))
+
+(defun run (agent prompt &key messages max-turns
+                         (cancel-token nil cancel-token-p)
+                         timeout)
   "运行智能体:PROMPT 为用户任务描述;MESSAGES 给出时在既有对话上续跑。
 MAX-TURNS 覆盖配置中的轮数上限。
+
+取消与超时(协作式,步骤间检查,不打断阻塞中的调用):
+  CANCEL-TOKEN  取消令牌(MAKE-CANCEL-TOKEN 构造,任意线程可
+                REQUEST-CANCEL 置位);未显式给出时继承外层运行的令牌;
+  TIMEOUT       墙钟秒数(正实数);超过即停。与继承的外层期限取较早者。
 
 返回 RUN-RESULT。停止原因:
   :END 正常结束(配置了 :VERIFY-CALLBACK 时已通过目标验证) |
   :UNVERIFIED 目标验证未通过(fail-closed:回调返回 NIL 或异常,消息保留) |
   :LENGTH 触达长度上限 | :MAX-TURNS 轮数护栏 |
   :BUDGET 累计 token 护栏 | :STALLED 连续相同工具调用护栏 |
-  :EMPTY 重试后仍为空回复(消息保留,不向上传播)。
+  :EMPTY 重试后仍为空回复(消息保留,不向上传播) |
+  :CANCELLED 取消令牌已置位 | :TIMEOUT 超过墙钟期限。
+取消/超时收场同样保留消息:已完成的轮次全部在 MESSAGES 与会话文件中,
+可续跑或审计;已计划未执行的工具调用编码为「[已取消]」失败结果。
 空回复之外的模型基础设施故障(API-ERROR 等)向上传播,由调用方感知;
 工具失败不是循环失败:作为失败结果回喂模型,循环继续。
 
@@ -509,10 +545,15 @@ MAX-TURNS 覆盖配置中的轮数上限。
      :SUMMARIZE(:ELIDED-MESSAGES :ELIDED-TOKENS [:SUMMARY-MESSAGE :USAGE] |
                 :FAILED-P :REASON)]
   → [:STALL(:TURN :STREAK :SIGNATURE)]}
+  → [:CANCEL(:REASON :REQUESTED/:TIMEOUT)]
   → [:VERIFY(:PASSED-P :REASON)] → :RUN-END(:STOP-REASON :TURNS :USAGE)"
-  (let ((*session-logger* (when (agent-session-file agent)
-                            (ignore-errors (make-session-logger
-                                            (agent-session-file agent))))))
+  (let* (;; 取消上下文:显式给出用之,否则继承外层(嵌套运行传播)
+         (*cancel-token* (if cancel-token-p cancel-token *cancel-token*))
+         ;; 墙钟期限:自身 TIMEOUT 与继承期限取较早者
+         (*run-deadline* (%effective-deadline timeout))
+         (*session-logger* (when (agent-session-file agent)
+                             (ignore-errors (make-session-logger
+                                             (agent-session-file agent))))))
     (let* ((effective-max-turns (or max-turns (agent-max-turns agent) 40))
            (start-messages (initial-messages agent prompt :messages messages))
            (system-prompt-message (first start-messages)))
@@ -539,6 +580,12 @@ MAX-TURNS 覆盖配置中的轮数上限。
             with last-signature = nil
             with identical-streak = 0
             do (progn
+                 ;; 取消/超时检查点:令牌已置位或墙钟超限时收场
+                 ;;(本 turn 尚未开始,完成轮数为 1-TURN)
+                 (let ((halt (%halt-reason *cancel-token* *run-deadline*)))
+                   (when halt
+                     (return (%halt-run agent halt msgs final-text usage
+                                        (1- turn)))))
                  ;; 轮数护栏
                  (when (> turn effective-max-turns)
                    (let ((result (%make-run-result
@@ -667,6 +714,13 @@ MAX-TURNS 覆盖配置中的轮数上限。
                             (return result)))
                          ;; 有工具调用:执行后进入下一轮
                          (t
+                          ;; 工具批次前的取消/超时检查点:
+                          ;; 避免取消后仍烧一整轮工具(本 turn 的模型
+                          ;; 调用已完成,完成轮数为 TURN)
+                          (let ((halt (%halt-reason *cancel-token* *run-deadline*)))
+                            (when halt
+                              (return (%halt-run agent halt msgs final-text usage
+                                                 turn))))
                           (setf msgs (append msgs (execute-tool-calls agent tool-calls)))
                           ;; 循环瘫痪护栏:连续相同「工具名+参数」调用达到上限,
                           ;; 判定模型已陷入重复循环,立即止损而非烧完轮数预算
@@ -692,12 +746,16 @@ MAX-TURNS 覆盖配置中的轮数上限。
 ;;; 便捷函数:一步完成「构造 + 运行」,嵌入方最常用
 (defun run-prompt (provider prompt &rest keys &key &allow-other-keys)
   "库形态的一站式入口:构造智能体并运行 PROMPT,返回 RUN-RESULT。
-除 PROVIDER 外,所有关键字参数与 MAKE-AGENT 相同。
+除 PROVIDER 外,关键字参数与 MAKE-AGENT 相同;另接受 RUN 的
+:CANCEL-TOKEN 与 :TIMEOUT(不透传给 MAKE-AGENT)。
 示例:
   (run-prompt (chariot-llm:make-provider :deepseek) \"统计当前目录的 Lisp 文件数\"
               :tools chariot-tools:+builtin-tools+ :permission-mode :yolo)"
-  (let ((agent (apply #'make-agent :provider provider keys)))
-    (run agent prompt)))
+  (let ((agent (apply #'make-agent :provider provider
+                      (remove-from-plist keys :cancel-token :timeout))))
+    (run agent prompt
+         :cancel-token (getf keys :cancel-token)
+         :timeout (getf keys :timeout))))
 
 (defun remove-from-plist (plist &rest keys)
   "返回去掉 KEYS 中任一键值对的 plist 副本(保留键值顺序)。"

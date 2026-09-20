@@ -61,6 +61,7 @@
                (:file "context")
                (:file "permission")
                (:file "session")
+               (:file "cancel")
                (:file "agent")))
 
 (defsystem "cl-chariot/mcp"
@@ -103,6 +104,7 @@
                (:file "provider-test")
                (:file "tool-test")
                (:file "agent-test")
+               (:file "concurrency-test")
                (:file "mcp-test")
                (:file "mcp-http-test")
                (:file "session-test")

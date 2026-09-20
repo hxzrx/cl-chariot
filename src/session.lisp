@@ -59,16 +59,25 @@ SEQ 单调递增;向既有文件追加时从已有记录数续起,崩溃或续�
 ;;; 记录落盘
 ;;; ---------------------------------------------------------------------------
 
+(defparameter *session-write-lock* (bordeaux-threads:make-lock "chariot-session")
+  "会话落盘的全局写锁。序号分配与单行追加在同一锁内完成:
+多线程并发落盘时 JSONL 行保持完整、序号唯一且文件内顺序一致。
+落盘是低频操作,全局单锁的竞争可忽略(见 docs/architecture.md ADR)。")
+
+(defun %append-line (path line)
+  "无锁单行追加(调用方持锁,或确证单线程)。自动建目录。"
+  (with-open-file (out path
+                       :direction :output
+                       :if-exists :append
+                       :if-does-not-exist :create
+                       :external-format :utf-8)
+    (write-line line out)))
+
 (defun session-append (path object)
   "把事件对象 OBJECT 追加写入 PATH 对应的 JSONL 文件(单行,自动建目录)。
-这是本层唯一的写副作用;调用方决定何时写。"
-  (let ((line (chariot-json:encode-json object)))
-    (with-open-file (out path
-                         :direction :output
-                         :if-exists :append
-                         :if-does-not-exist :create
-                         :external-format :utf-8)
-      (write-line line out))))
+这是本层唯一的写副作用;调用方决定何时写。线程安全(行完整性)。"
+  (bordeaux-threads:with-lock-held (*session-write-lock*)
+    (%append-line path (chariot-json:encode-json object))))
 
 (defun %session-target (target)
   "把落盘目标 TARGET(文件路径字符串或 SESSION-LOGGER)归一为
@@ -80,15 +89,17 @@ SEQ 单调递增;向既有文件追加时从已有记录数续起,崩溃或续�
 (defun session-record (target object)
   "向 TARGET(文件路径或 SESSION-LOGGER)追加一条记录,返回写入的记录。
 记录自动附加时间戳 ts;经 LOGGER 写入时再附加单调序号 seq。
-TARGET 为路径时退化为无序号形态(兼容直接以路径落盘的调用方式)。"
+TARGET 为路径时退化为无序号形态(兼容直接以路径落盘的调用方式)。
+线程安全:序号分配与落盘在同一锁内原子完成(见 *SESSION-WRITE-LOCK*)。"
   (multiple-value-bind (path logger) (%session-target target)
-    (let ((cells (jobj-alist object)))
-      (push (cons "ts" (chariot-util:now-universal)) cells)
-      (when logger
-        (push (cons "seq" (incf (session-logger-seq logger))) cells))
-      (let ((record (cons :obj cells)))
-        (session-append path record)
-        record))))
+    (bordeaux-threads:with-lock-held (*session-write-lock*)
+      (let ((cells (jobj-alist object)))
+        (push (cons "ts" (chariot-util:now-universal)) cells)
+        (when logger
+          (push (cons "seq" (incf (session-logger-seq logger))) cells))
+        (let ((record (cons :obj cells)))
+          (%append-line path (chariot-json:encode-json record))
+          record)))))
 
 (defun session-log-message (target message)
   "把一条消息作为 message 记录追加进会话文件(路径或 SESSION-LOGGER)。"
@@ -257,6 +268,9 @@ PROVIDER 提供 provider/model;CONFIG-CELLS(可选)为 CONFIG-DIGEST 返回的
        (list :kind :verify
              :passed-p (%record-bool (funcall ref "passed_p"))
              :reason (funcall ref "reason")))
+      (:cancel
+       (list :kind :cancel
+             :reason (%kind-keyword (funcall ref "reason"))))
       (:run-end
        (list :kind :run-end
              :stop-reason (%kind-keyword (funcall ref "stop_reason"))
@@ -291,7 +305,8 @@ CONFIG-DIGEST 写入的全部字段);没有 meta 时返回 NIL。"
 
 (defun session-stop-reason (records)
   "最近一次运行的停止原因(最后一条 run-end 镜像的 stop_reason 关键字):
-:end / :unverified / :max-turns / :length / :budget / :stalled / :empty。
+:end / :unverified / :max-turns / :length / :budget / :stalled / :empty /
+:cancelled / :timeout。
 没有 run-end(运行未结束或中途崩溃)时返回 NIL。"
   (let ((reason nil))
     (dolist (record records reason)

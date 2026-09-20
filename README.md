@@ -20,6 +20,8 @@ DeepSeek / Qwen / GLM / OpenAI 等多种大模型,提供可编程的智能体主
 | 工具系统 | `define-tool` 声明式定义工具;自动生成 JSON Schema;内置 bash/read/write/edit/glob/grep/web-fetch 七件;执行世界 seam(`make-builtin-tools :world`)把文件/进程/网络访问与工具面分离,可注入路径受限世界 |
 | MCP 接入 | stdio + Streamable HTTP 双传输 MCP 客户端(协议 2025-11-25,向下兼容);工具零损失桥接;会话过期自动重握手;超时/取消/断连收场 |
 | 审批策略 | yolo / default / readonly 三种模式 + 工具黑白名单 + 可编程询问回调 |
+| 运行控制 | 协作式取消(`:cancel-token` 令牌,任意线程可置位)与墙钟超时(`:timeout`);`:cancelled`/`:timeout` 停止原因,消息保留可续跑;嵌套运行(子智能体)自动继承取消信号与期限 |
+| 并发契约 | 值语义配置对象可跨线程共享,同一智能体可多线程并发运行;会话落盘线程安全(行完整、序号唯一)+「单文件单写者」契约;事件回调仅在运行线程同步调用——以上均有并发套件强制执行 |
 | 目标验证 | 可编程 `:verify-callback` 验证门:自然结束前强制复验,失败降级 `:unverified`(fail-closed,缺省关闭) |
 | 会话持久化 | JSONL 事件流;消息与全部运行事件(含序号)镜像落盘;任意点投影回放、前缀分叉续跑与日志检索;「模型可见即已记录」不变量;meta 携带配置摘要指纹;崩溃容忍加载;支持从历史对话续跑 |
 | 上下文管理 | CJK 感知的 token 估算;超预算先摘要后裁剪(`:compaction-fn` 可编程折叠,失败自动降级);保证不产生孤儿工具消息;压缩经 `:compact`/`:summarize` 事件留痕 |
@@ -122,7 +124,7 @@ demo/run.sh          # 依次运行三个渐进式示例
 ### 4. 运行测试
 
 ```bash
-tests/run.sh                          # 离线全量测试(946 项断言)
+tests/run.sh                          # 离线全量测试(1045 项断言)
 CHARIOT_LIVE=1 tests/run.sh               # 附加真机联调(需 API Key)
 ```
 
