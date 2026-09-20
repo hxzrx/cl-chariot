@@ -209,7 +209,7 @@ cl-chariot/
 ├── mcp/                    # FastMCP test server for live runs (Streamable HTTP; deployment example: cantos.cn)
 ├── examples/               # Single-file example scripts (MCP end-to-end demo, etc.)
 ├── demo/                   # A complete example project
-├── docs/                   # Architecture / API / provider docs
+├── docs/                   # Architecture / API / embedding guide / MCP / providers
 └── bin/cl-chariot          # CLI launcher
 ```
 

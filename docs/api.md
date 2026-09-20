@@ -598,3 +598,20 @@ REPL 中 `/mcp` 查看服务器状态、`/tools` 查看全部工具;完整细节
   通过标记、原因、停止原因、轮数、token、耗时——可回溯到完整会话上下文;
 - 判分器缺省以自然结束(`:end`)为通过;判分器异常按不通过(fail-closed)
   并留痕;`:cancel-token`/`:timeout` 透传,取消后剩余任务照常记录。
+
+## 11. API 稳定性
+
+版本化遵循 semver。1.0 之前次版本号(0.x)可能引入破坏性变更,但每一项
+都在 CHANGELOG 显式列出并附迁移说明;稳定分层如下:
+
+- **事实冻结层**(视为已承诺,任何调整按破坏性变更对待):
+  `chariot` 伞形包的全部导出;`make-agent` / `run` / `run-prompt` 的
+  关键字参数(只增不改名不删);事件种类(`:kind`)与载荷键;停止原因
+  关键字;会话 JSONL 记录字段(新增字段对读取方前向兼容);内置工具
+  名称与 JSON Schema 形状;
+- **稳定层**:chariot-agent / chariot-tools / chariot-llm / base 各包导出;
+- **演进层**:chariot-mcp 的实验特性、执行世界的高级组合——可能调整,
+  同样记录于 CHANGELOG。
+
+面向大型项目嵌入的整体工作法(线程模型、关停顺序、多租户装配等)见
+[embedding.md](embedding.md)。

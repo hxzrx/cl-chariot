@@ -447,6 +447,7 @@ HTTP 的 GET 长监听流、OAuth 2.1。")
    #:make-policy
    #:apply-policy
    #:policy-digest
+   #:policy-from-agent
    #:make-eval-task
    #:run-eval
    #:eval-summary

@@ -202,7 +202,7 @@ cl-chariot/
 ├── mcp/                    # 联调用 FastMCP 测试服务器(Streamable HTTP,部署示例 cantos.cn)
 ├── examples/               # 单文件示例脚本(MCP 端到端演示等)
 ├── demo/                   # 完整示例项目
-├── docs/                   # 架构 / API / 厂商接入文档
+├── docs/                   # 架构 / API / 嵌入指南 / MCP / 厂商接入
 └── bin/cl-chariot          # CLI 启动脚本
 ```
 
