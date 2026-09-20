@@ -233,8 +233,10 @@ PATHS 为会话文件路径字符串或其列表(跨会话/跨天汇总)。"
 (defun session-runs (records)
   "按运行汇总:每个 meta 记录对应一次 RUN,返回运行摘要列表(按文件顺序):
   (:obj (\"run_id\" . 标识) (\"parent_run_id\" . 父标识|:null)
-        (\"model\" . 模型|:null) (\"stop_reason\" . \"end\"…|:null)
-        (\"turns\" . 轮数|:null) (\"usage\" . <该运行累计用量>))
+        (\"provider\" . 厂商|:null) (\"model\" . 模型|:null)
+        (\"started\" . 启动时间戳|:null)
+        (\"stop_reason\" . \"end\"…|:null) (\"turns\" . 轮数|:null)
+        (\"usage\" . <该运行累计用量>))
 同 run_id 的 usage 记录累加为该运行用量;run-end 镜像填充停止原因与轮数
 (运行未结束/崩溃时对应字段为 :null)。无 run_id 的历史记录同样按 meta
 分段汇总(run_id 为 :null)。计费与审计按运行对账的基础。"
@@ -245,7 +247,9 @@ PATHS 为会话文件路径字符串或其列表(跨会话/跨天汇总)。"
           (:meta
            (push (list (cons 'run-id (chariot-json:jref record "run_id"))
                        (cons 'parent-run-id (chariot-json:jref record "parent_run_id"))
+                       (cons 'provider (chariot-json:jref record "provider"))
                        (cons 'model (chariot-json:jref record "model"))
+                       (cons 'started (chariot-json:jref record "ts"))
                        (cons 'stop-reason nil)
                        (cons 'turns nil)
                        (cons 'usage (chariot-llm:zero-usage)))
@@ -268,12 +272,50 @@ PATHS 为会话文件路径字符串或其列表(跨会话/跨天汇总)。"
                 `(:obj
                   ("run_id" . ,(or (cdr (assoc 'run-id entry)) :null))
                   ("parent_run_id" . ,(or (cdr (assoc 'parent-run-id entry)) :null))
+                  ("provider" . ,(or (cdr (assoc 'provider entry)) :null))
                   ("model" . ,(or (cdr (assoc 'model entry)) :null))
+                  ("started" . ,(or (cdr (assoc 'started entry)) :null))
                   ("stop_reason" . ,(let ((reason (cdr (assoc 'stop-reason entry))))
                                       (if reason (string-downcase (symbol-name reason)) :null)))
                   ("turns" . ,(or (cdr (assoc 'turns entry)) :null))
                   ("usage" . ,(cdr (assoc 'usage entry)))))
               (nreverse entries)))))
+(defun %session-files (paths)
+  "归一为会话文件列表:字符串/路径名为单文件,或为目录(收集其下全部
+.jsonl,按路径名排序);列表为逐项归一后的拼接。目录不存在时该项为空。"
+  (etypecase paths
+    ((or string pathname)
+     (let ((p (pathname paths)))
+       (if (uiop:directory-pathname-p (or (probe-file p) p))
+           (sort (remove-if-not
+                  (lambda (f) (string-equal (pathname-type f) "jsonl"))
+                  (or (ignore-errors (uiop:directory-files p)) '()))
+                 #'string< :key #'namestring)
+           (list p))))
+    (list (mapcan #'%session-files paths))))
+
+(defun session-index (paths)
+  "跨会话运行索引:扫描一个或多个会话文件(PATHS 为目录时收集其下全部
+.jsonl),返回按启动时间排序的索引行(升序;无时间戳的行排最前):
+  (:obj (\"file\" . 文件路径) (\"run_id\" . …) (\"parent_run_id\" . …|:null)
+        (\"provider\" . …|:null) (\"model\" . …|:null)
+        (\"started\" . ts|:null) (\"stop_reason\" . …|:null)
+        (\"turns\" . …|:null) (\"usage\" . <运行用量>))
+每行为一次运行(SESSION-RUNS 逐文件展开,补文件归属字段);损坏行与
+不可读文件跳过。多会话检索/仪表盘/评测套件的基础。"
+  (let ((rows '()))
+    (dolist (file (%session-files paths))
+      (multiple-value-bind (records corrupt)
+          (ignore-errors (session-load file))
+        (declare (ignore corrupt))
+        (when records
+          (dolist (entry (session-runs records))
+            (push (cons :obj
+                        (cons (cons "file" (namestring file))
+                              (jobj-alist entry)))
+                  rows)))))
+    (sort rows #'< :key (lambda (row) (or (chariot-json:jref row "started") 0)))))
+
 ;;; ---------------------------------------------------------------------------
 ;;; 记录取值
 ;;; ---------------------------------------------------------------------------
@@ -318,14 +360,14 @@ PATHS 为会话文件路径字符串或其列表(跨会话/跨天汇总)。"
           collect (chariot-json:jref record "message")))
 
 (defun session-events (records &key kinds)
-  "提取事件镜像记录,保持原顺序。缺省排除四类业务记录
-(:message / :usage / :meta / :fork);KINDS 给出时只取这些种类。"
+  "提取事件镜像记录,保持原顺序。缺省排除五类业务记录
+(:message / :usage / :meta / :fork / :archive);KINDS 给出时只取这些种类。"
   (flet ((selected (record)
            (let ((kind (session-record-kind record)))
              (and kind
                   (if kinds
                       (member kind kinds :test #'eq)
-                      (not (member kind '(:message :usage :meta :fork))))))))
+                      (not (member kind '(:message :usage :meta :fork :archive))))))))
     (remove-if-not #'selected records)))
 
 (defun %record-bool (value)
@@ -419,6 +461,11 @@ PATHS 为会话文件路径字符串或其列表(跨会话/跨天汇总)。"
        (list :kind :fork
              :source (funcall ref "source")
              :upto-seq (funcall ref "upto_seq")))
+      (:archive
+       (list :kind :archive
+             :source (funcall ref "source")
+             :archived (funcall ref "archived")
+             :kept (funcall ref "kept")))
       (t (when kind (list :kind kind))))))
 
 ;;; ---------------------------------------------------------------------------
@@ -559,6 +606,83 @@ TARGET 已存在时追加而非覆盖。分叉后的 TARGET 可直接作为 RUN 
                `(:obj ("kind" . "fork")
                       ("source" . ,(namestring (pathname source)))
                       ("upto_seq" . ,upto)))))))
+;;; ---------------------------------------------------------------------------
+;;; 轮转归档
+;;; ---------------------------------------------------------------------------
+
+(defun %split-runs (records)
+  "按 meta 边界把记录切分为运行段列表(每段为该运行的记录列表,保序)。
+meta 之前紧邻的 :run-start 镜像属于即将开始的运行,切分时留给下一段;
+首个 meta 之前的记录(直接落盘等)并入第一段。"
+  (let ((segments '())
+        (current '()))
+    (flet ((cut ()
+             (let ((carry '()))
+               (loop while (and current
+                                (eq (session-record-kind (first current)) :run-start))
+                     do (push (pop current) carry))
+               (when current
+                 (push (nreverse current) segments))
+               (setf current carry))))
+      (dolist (record records)
+        (when (eq (session-record-kind record) :meta)
+          (cut))
+        (push record current))
+      (when current
+        (push (nreverse current) segments)))
+    (nreverse segments)))
+
+(defun session-archive-runs (source archive &key (keep-runs 1))
+  "轮转归档:把 SOURCE 中较早的运行归档到 ARCHIVE,SOURCE 原子重写为
+只保留最近 KEEP-RUNS 次运行(按 meta 边界切分)。
+  - 归档部分原样复制到 ARCHIVE(已存在时追加;保留 seq/ts/run_id),
+    并追加 archive 标记记录(来源/归档与保留的记录条数);
+  - SOURCE 的重写是原子的:先写同目录临时文件,再改名覆盖——
+    崩溃不会产生半写状态;
+  - 保留段的序号重排为 1..N(原始序号保存在归档副本中)——
+    写入器按记录数续序号,重排保证轮转后续跑序号不回绕、不碰撞;
+  - 跨文件关联键是 run_id(各文件 seq 独立自洽,勿跨文件比较序号);
+  - 应在运行结束后(无写入者)调用,遵守单写者契约。
+返回 (VALUES 归档记录条数 标记记录);无可归档(运行数 ≤ KEEP-RUNS)时
+返回 (VALUES 0 NIL),不触碰任何文件。"
+  (multiple-value-bind (records corrupt)
+      (session-load source)
+    (declare (ignore corrupt))
+    (let* ((segments (%split-runs records))
+           (total (length segments))
+           (keep (min (max 0 keep-runs) total))
+           (cut (- total keep)))
+      (if (plusp cut)
+          (let* ((archived (subseq segments 0 cut))
+                 (kept (subseq segments cut))
+                 (archived-count (reduce #'+ archived :key #'length))
+                 (kept-count (reduce #'+ kept :key #'length))
+                 (src (pathname source))
+                 (tmp (merge-pathnames
+                       (format nil "~A.tmp-~A" (pathname-name src) (gen-id "rot"))
+                       src)))
+            (dolist (segment archived)
+              (dolist (record segment)
+                (session-append archive record)))
+            (let ((marker
+                    (session-record
+                     (make-session-logger archive)
+                     `(:obj ("kind" . "archive")
+                            ("source" . ,(namestring src))
+                            ("archived" . ,archived-count)
+                            ("kept" . ,kept-count))))
+                  ;; 保留段序号重排为 1..N:写入器按记录数续号,
+                  ;; 稠密序号保证轮转后续跑不回绕、不碰撞
+                  (n 0))
+              (dolist (segment kept)
+                (dolist (record segment)
+                  (session-append
+                   tmp
+                   (cons :obj (chariot-util:alist-set (jobj-alist record)
+                                                      "seq" (incf n))))))
+              (uiop:rename-file-overwriting-target tmp src)
+              (values archived-count marker)))
+          (values 0 nil)))))
 
 ;;; ---------------------------------------------------------------------------
 ;;; 「模型可见即已记录」不变量

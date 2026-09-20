@@ -391,6 +391,45 @@ meta 记录另携带 `config-digest` 的**配置摘要**(轮数/审批模式/工
 `session-record-run-id` 读取单条记录的运行标识(直接落盘形态为 NIL);
 `session-record->event` 回放还原的事件同样携带 `:run-id`,与实时形状对称。
 
+### 轮转归档(session-archive-runs)
+
+会话文件只增不减,长跑宿主按运行边界轮转:较早的运行复制进归档文件,
+当前文件原子重写为只保留最近 N 次运行——
+
+```lisp
+(multiple-value-bind (archived marker)
+    (chariot-agent:session-archive-runs "run.jsonl" "archive/2026-09.jsonl"
+                                        :keep-runs 5)
+  ;; archived = 归档的记录条数;marker 为 archive 标记记录
+  ;;(来源/归档与保留条数,经 SESSION-FILTER :KINDS '(:ARCHIVE) 可查)
+  ...)
+```
+
+- 切分按 meta 边界(运行粒度);归档部分原样复制(保留 seq/ts/run_id),
+  归档文件已存在时追加——按月/按大小累积归档皆可;
+- 当前文件的重写是**原子**的(同目录临时文件 + 改名覆盖),崩溃不产生
+  半写状态;保留段序号重排为 1..N(原始序号在归档副本中),写入器按
+  记录数续号,轮转后续跑序号不回绕、不碰撞;
+- **跨文件关联键是 run_id**(各文件 seq 独立自洽,勿跨文件比较序号);
+- 应在运行结束后(无写入者)调用,遵守单写者契约;无可归档时返回
+  `(VALUES 0 NIL)`,不触碰任何文件。
+
+### 跨会话索引(session-index)
+
+```lisp
+(chariot-agent:session-index "sessions/")          ; 目录:收集全部 .jsonl
+(chariot-agent:session-index '("a.jsonl" "b.jsonl"))
+;; → 按启动时间升序的运行行(每行一次运行):
+;;   (:obj ("file" . …) ("run_id" . …) ("parent_run_id" . …)
+;;         ("provider" . …) ("model" . …) ("started" . ts)
+;;         ("stop_reason" . …) ("turns" . …) ("usage" . …))
+```
+
+SESSION-RUNS 的跨文件展开(补文件归属);损坏行与不可读文件跳过,
+不存在的目录返回空表。多会话检索、仪表盘与评测套件的基础——例如配合
+`remove-if`/`cl-ppcre` 按 provider、日期或状态筛运行,或在归档目录上
+建立全历史视图。
+
 ## 7. 错误处理
 
 ```lisp

@@ -107,6 +107,7 @@
                (:file "concurrency-test")
                (:file "cost-test")
                (:file "runid-test")
+               (:file "scale-test")
                (:file "mcp-test")
                (:file "mcp-http-test")
                (:file "session-test")

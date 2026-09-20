@@ -278,6 +278,8 @@ HTTP 传输通过动态变量 *http-post-fn* 注入,便于测试与替换。")
    #:session-filter
    #:session-search
    #:session-fork
+   #:session-archive-runs
+   #:session-index
    #:session-compact-hints
    #:session-summary-messages
    #:session-recording-break))

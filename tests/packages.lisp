@@ -84,6 +84,7 @@
    #:cancel-reason #:cancel-token-lock #:cancel-token-cancelled-p
    #:agent-fallback-providers #:session-usage-report
    #:result-run-id #:session-runs #:session-record-run-id
+   #:session-archive-runs #:session-index
    #:emit-event)
   (:import-from :bordeaux-threads
    #:make-thread #:join-thread #:make-lock #:with-lock-held

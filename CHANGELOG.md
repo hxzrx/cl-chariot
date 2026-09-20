@@ -20,6 +20,19 @@
     上下文的动态绑定机制;只读并行工具的工作线程经词法捕获获得同样上下文;
     设计记录见 ADR #14;
   - 新增 `runid-suite`(6 项测试,28 项断言)。
+- **会话数据规模管理**(P1 可观测的第 5 项):
+  - `session-archive-runs`:按运行边界(meta)轮转归档——较早的运行原样
+    复制进归档文件(追加式,保留 seq/ts/run_id)+ `archive` 标记记录;
+    当前文件原子重写为只保留最近 N 次运行(同目录临时文件 + 改名覆盖),
+    保留段序号重排为 1..N,写入器续号不回绕不碰撞;无可归档时不触碰
+    任何文件;跨文件关联键为 run_id(ADR #15);
+  - `session-index`:跨会话运行索引——扫描一个或多个会话文件(目录形态
+    收集全部 .jsonl),返回按启动时间升序的运行行(文件/run_id/父标识/
+    provider/model/started/stop_reason/turns/usage);损坏行与不可读文件
+    跳过;`session-runs` 摘要同步增加 provider 与 started 字段;
+  - `session-events` 缺省排除 `:archive` 业务标记;`session-record->event`
+    支持还原;
+  - 新增 `scale-suite`(6 项测试,35 项断言)。
 
 ## [0.8.0] - 2026-09-20
 
