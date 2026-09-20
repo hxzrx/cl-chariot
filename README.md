@@ -8,7 +8,7 @@ agent loop, a tool system, approval policies and session persistence. It can be
 **embedded as a library into large projects**, and also ships with an
 **interactive command-line frontend (CLI)**.
 
-- Version: 0.8.0 · License: MIT
+- Version: 0.9.0 · License: MIT
 - Implementation requirement: any ANSI Common Lisp (the full test suite passes on SBCL 2.6 and CCL 1.13; no implementation-specific features)
 - Design goal: integrate into large projects as a dependency library to harness complex, industry-grade agents
 

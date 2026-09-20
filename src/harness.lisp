@@ -11,7 +11,7 @@
 
 (declaim (optimize (speed 1) (safety 3) (debug 3)))
 
-(defparameter +version+ "0.8.0"
+(defparameter +version+ "0.9.0"
   "CL-Chariot 版本号。")
 
 (defun make-subagent-tool (provider
