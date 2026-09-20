@@ -1,6 +1,9 @@
 # 更新日志
 
-## [未发布]
+## [0.8.0] - 2026-09-20
+
+**主题:生产控制面——可取消、可并发、可算账。**面向「作为依赖库嵌入大型
+项目」的运行控制与成本治理;并发行为从「大概率没事」升级为「有承诺、被测试」。
 
 ### 新增
 - **Provider 故障切换(`:fallback-providers`)**:主 Provider 出现模型接入层
@@ -42,6 +45,12 @@
     约定,并行运行各配独立 `:session-file`;
   - `on-event` 始终在运行线程同步调用(工具并行阶段不发事件、不落盘);
   - 并发契约文档化(docs/api.md §9、docs/architecture.md §5 与 ADR #11/#12)。
+
+### 文档
+- README 重构为双语:英文版(README.md)为默认入口,中文版迁至
+  README.zh-CN.md,两版互链;内容与代码同步——目录树补齐
+  world.lisp / cancel.lisp / mcp-http.lisp,事件流示例加入
+  `:cancel` 与 `:provider-switch`,修正核心 API 示例的括号笔误。
 
 ## [0.7.0] - 2026-09-19
 

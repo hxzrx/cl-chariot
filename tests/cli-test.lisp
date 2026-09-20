@@ -41,10 +41,11 @@
   (is (string= chariot-cli:+cli-version+ chariot:+version+)))
 
 (test umbrella-exports-work
-  ;; 伞形包统一入口可用
+  ;; 伞形包统一入口可用;版本号为 semver 形状(不随发布漂移,
+  ;; 与 CLI 版本的一致性由 version-consistent 单独保证)
   (is (member :deepseek (chariot:provider-preset-names)))
   (is (string= "bash" (first (chariot:builtin-tool-names))))
-  (is (string= "0.7.0" chariot:+version+)))
+  (is (cl-ppcre:scan "^[0-9]+\\.[0-9]+\\.[0-9]+$" chariot:+version+)))
 
 ;;; ---------- MCP 接入(--mcp) ----------
 
