@@ -23,7 +23,7 @@
   :description "CL-Chariot 基础层:纯函数工具集、JSON 编解码、消息模型"
   :author "cl-chariot contributors"
   :license "MIT"
-  :version "0.9.0"
+  :version "0.9.1"
   :depends-on ()
   :pathname "src/"
   :serial t
