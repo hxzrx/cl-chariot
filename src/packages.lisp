@@ -37,6 +37,15 @@
    #:simple-diff
    ;; 非加密散列(配置摘要)
    #:fnv-1a-hex
+   ;; 废弃机制
+   #:deprecated-warning
+   #:deprecated-warning-name
+   #:deprecated-warning-since
+   #:deprecated-warning-use
+   #:deprecated-warning-removed-in
+   #:deprecate
+   #:note-deprecated
+   #:deprecated-symbols
    ;; 杂项
    #:now-universal
    #:format-duration))
@@ -388,7 +397,8 @@ HTTP 的 GET 长监听流、OAuth 2.1。")
    "CL-Chariot 统一入口:重新导出各层稳定 API,并提供子智能体(Subagent)工具。")
   (:use :cl)
   (:import-from :chariot-util
-   #:join-string #:estimate-text-tokens)
+   #:join-string #:estimate-text-tokens
+   #:deprecated-warning #:deprecated-symbols)
   (:import-from :chariot-json
    #:parse-json #:encode-json #:jref)
   (:import-from :chariot-msg
@@ -426,6 +436,9 @@ HTTP 的 GET 长监听流、OAuth 2.1。")
    #:tools-by-names
    #:find-tool
    #:make-subagent-tool
+   ;; 废弃机制
+   #:deprecated-warning
+   #:deprecated-symbols
    ;; 智能体
    #:make-agent
    #:run

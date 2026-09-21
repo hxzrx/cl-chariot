@@ -128,7 +128,7 @@ demo/run.sh          # 依次运行三个渐进式示例
 ### 4. 运行测试
 
 ```bash
-tests/run.sh                          # 离线全量测试(1199 项断言)
+tests/run.sh                          # 离线全量测试(1224 项断言)
 CHARIOT_LIVE=1 tests/run.sh               # 附加真机联调(需 API Key)
 ```
 

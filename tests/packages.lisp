@@ -9,7 +9,10 @@
    #:join-string #:split-string #:split-lines #:string-blank-p #:trim-whitespace
    #:clamp-string #:kebab->snake #:snake->kebab-keyword #:alist-ref #:alist-set
    #:merge-alists #:gen-id #:estimate-text-tokens #:simple-diff
-   #:format-duration #:fnv-1a-hex)
+   #:format-duration #:fnv-1a-hex
+   #:deprecate #:note-deprecated #:deprecated-symbols #:deprecated-warning
+   #:deprecated-warning-name #:deprecated-warning-since
+   #:deprecated-warning-use #:deprecated-warning-removed-in)
   (:import-from :chariot-json
    #:parse-json #:encode-json #:jref #:jref-path #:jobj-alist #:json-object-p
    #:+json-null+ #:+json-false+ #:+json-true+ #:json-parse-error #:json-encode-error)

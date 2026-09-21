@@ -132,7 +132,7 @@ See [demo/README.md](demo/README.md).
 ### 4. Run the Tests
 
 ```bash
-tests/run.sh                          # full offline suite (1199 assertions)
+tests/run.sh                          # full offline suite (1224 assertions)
 CHARIOT_LIVE=1 tests/run.sh               # plus live tests (needs API keys)
 ```
 

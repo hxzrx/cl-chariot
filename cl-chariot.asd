@@ -29,6 +29,7 @@
   :serial t
   :components ((:file "packages")
                (:file "util")
+               (:file "deprecation")
                (:file "json")
                (:file "message")))
 
@@ -111,6 +112,7 @@
                (:file "runid-test")
                (:file "scale-test")
                (:file "policy-eval-test")
+               (:file "deprecation-test")
                (:file "mcp-test")
                (:file "mcp-http-test")
                (:file "session-test")

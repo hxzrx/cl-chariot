@@ -613,5 +613,30 @@ REPL 中 `/mcp` 查看服务器状态、`/tools` 查看全部工具;完整细节
 - **演进层**:chariot-mcp 的实验特性、执行世界的高级组合——可能调整,
   同样记录于 CHANGELOG。
 
+### 废弃流程(Deprecation)
+
+移除/改名属于破坏性变更:除紧急安全修复外,应先经废弃流程——
+**符号走 稳定 → 废弃 → 移除 三段,废弃期至少保留两个次版本**,移除时在
+CHANGELOG 显式列出。
+
+```lisp
+;; 库内部(顶层):登记 + compiler macro
+(chariot-util:deprecate 'old-name "0.10.0"
+                        :use 'new-name :removed-in "0.12.0")
+
+;; 依赖方:编译「old-name 处于调用位」的代码时收到警告(不影响语义);
+;; 当前废弃清单:
+(chariot:deprecated-symbols)   ; → plist 列表(:name :since :use :removed-in)
+                                ;   当前为空——API 尚无废弃项
+```
+
+- **编译期**:compiler macro 在依赖方编译调用点时发出
+  `deprecated-warning`(含废弃起始版本、替代符号、计划移除版本);
+- **运行期**:废弃函数体内调用 `note-deprecated`,覆盖 FUNCALL/高阶传参
+  等编译期不可见的路径(每次调用发出);
+- **静音**:生产环境可按条件类型静音——
+  `(handler-bind ((deprecated-warning #'muffle-warning)) …)`;
+- 登记表只在加载期写入,运行期只读。
+
 面向大型项目嵌入的整体工作法(线程模型、关停顺序、多租户装配等)见
 [embedding.md](embedding.md)。

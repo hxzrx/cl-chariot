@@ -17,6 +17,7 @@
            (append '(util-suite json-suite message-suite provider-suite
                      tool-suite agent-suite concurrency-suite cost-suite
                      runid-suite scale-suite policy-suite eval-suite
+                     deprecation-suite
                      mcp-suite mcp-http-suite
                      session-suite cli-suite mcp-live-suite)
                    (when live-p '(live-suite))))
