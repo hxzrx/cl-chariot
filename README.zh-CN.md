@@ -6,7 +6,7 @@
 DeepSeek / Qwen / GLM / OpenAI 等多种大模型,提供可编程的智能体主循环、工具系统、
 审批策略与会话持久化。既可以**作为程序库嵌入大型项目**,也附带**命令行交互前端(CLI)**。
 
-- 版本:0.9.1 · 许可:MIT
+- 版本:0.9.2 · 许可:MIT
 - 实现要求:任意 ANSI Common Lisp(已在 SBCL 2.6 与 CCL 1.13 上全部测试通过,不使用任何实现特定特性)
 - 设计目标:以依赖库的形式集成到大项目中,驾驭复杂的行业智能体
 
@@ -120,7 +120,7 @@ REPL 中用 `/mcp` 查看服务器状态、`/tools` 查看全部工具。详见 
 
 ```bash
 export DEEPSEEK_API_KEY=sk-...
-demo/run.sh          # 依次运行三个渐进式示例
+demo/run.sh          # 依次运行三个实战示例(发布说明 / 代码审查 / 提示词评测)
 ```
 
 详见 [demo/README.md](demo/README.md)。
@@ -200,7 +200,7 @@ cl-chariot/
 │   └── cli.lisp            #   命令行前端
 ├── tests/                  # FiveAM 测试套件(离线 + 真机联调两层)
 ├── mcp/                    # 联调用 FastMCP 测试服务器(Streamable HTTP,部署示例 cantos.cn)
-├── examples/               # 单文件示例脚本(MCP 端到端演示等)
+├── examples/               # 单文件示例脚本(离线 MCP 端到端 / 沙箱自检、真机上手)
 ├── demo/                   # 完整示例项目
 ├── docs/                   # 架构 / API / 嵌入指南 / MCP / 厂商接入
 └── bin/cl-chariot          # CLI 启动脚本

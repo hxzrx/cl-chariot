@@ -10,9 +10,15 @@
 ;;;; 依赖:本机有 python3(其余依赖由 CL-Chariot 测试/库环境提供);
 ;;;; 不需要任何 LLM API Key、不需要网络。若设了 DEEPSEEK_API_KEY 等,
 ;;;; 也不会使用——本演示刻意离线,保证结果可复现。
+;;;; 退出码:0 成功;3 环境缺 Quicklisp。
 
 (require :asdf)
-(load "~/quicklisp/setup.lisp")
+(let ((ql-setup (merge-pathnames "quicklisp/setup.lisp" (user-homedir-pathname))))
+  (unless (probe-file ql-setup)
+    (format *error-output* "未找到 ~/quicklisp/setup.lisp:本示例经 Quicklisp/ASDF 加载。~%")
+    (format *error-output* "请安装 Quicklisp(https://www.quicklisp.org/)后重试。~%")
+    (uiop:quit 3))
+  (load ql-setup))
 (asdf:load-system :cl-chariot :verbose nil)
 (asdf:load-system :cl-chariot/mcp :verbose nil)
 

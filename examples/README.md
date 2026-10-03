@@ -1,27 +1,47 @@
-# examples/ —— 独立示例脚本
+# examples/ — Single-File Example Scripts
 
-与 `demo/`(ASDF 系统形态的完整示例项目)不同,本目录是**单文件脚本示例**,
-直接以 `--script` / `--load` 运行。
+English | [简体中文](README.zh-CN.md)
 
-## mcp-demo.lisp —— MCP 客户端端到端演示
+Unlike `demo/` (a complete ASDF example project), this directory holds
+**self-contained single-file scripts** you run directly with `--script` /
+`--load`. Each one targets a typical entry scenario of the library.
 
-**全离线、零 API Key**:脚本化假模型驱动智能体主循环,智能体调用由真实
-MCP 服务器(python3 假服务器,stdio 传输)桥接来的工具。
+| Script | Needs API key? | Scenario | What it shows |
+|---|---|---|---|
+| `mcp-demo.lisp` | No | **MCP client, end to end**: a scripted fake LLM drives the full agent loop; the agent calls tools bridged from a real MCP server (python3, stdio transport) | `make-mcp-client` → `initialize` handshake (version negotiation) → `mcp-tools-from-server` bridging → `execute-tool` → tool results fed back to the model → `annotations.readOnlyHint` mapped to readonly classification |
+| `bwrap-sandbox.lisp` | No | **Sandbox boundary self-check**: before handing an agent a bash tool in production, verify the execution-world boundary holds | `bwrap-usable-p` pre-probe (with graceful degradation to a path-bound world), `make-bwrap-world` assembly, then a probe battery: workspace writable & host-visible, base system read-only, no network, non-zero exit codes surfaced, lexical path boundary for file tools |
+| `live-quickstart.lisp` | Yes | **First five minutes, live**: a real micro-chore — count TODO/FIXME comments in the current directory | Provider assembly with optional fallback chain (`CHARIOT_FALLBACK_PROVIDERS`), readonly survey tools inside a path-bound world, streaming event rendering, run summary with usage and wall-clock time, `:timeout` guardrail |
+
+## Running
 
 ```bash
-# 依赖:本机有 python3;在仓库根目录运行
+# Offline examples (python3 required for mcp-demo; bubblewrap optional for the sandbox check)
 sbcl --script examples/mcp-demo.lisp
-# 或
-ccl -n -b --load examples/mcp-demo.lisp --eval '(quit)'
+sbcl --script examples/bwrap-sandbox.lisp
+
+# Live example (needs a key)
+CHARIOT_PROVIDER=deepseek DEEPSEEK_API_KEY=sk-... \
+  sbcl --script examples/live-quickstart.lisp
 ```
 
-演示内容:
-1. 启动 MCP 服务器子进程并完成 initialize 握手(协议版本协商);
-2. `mcp-tools-from-server` 把服务器工具桥接为 CL-Chariot 工具对象;
-3. `execute-tool` 直接执行桥接工具;
-4. 脚本化模型触发工具调用 → 结果回喂 → 最终答复(完整智能体循环);
-5. `annotations.readOnlyHint` 注解到只读分级的映射。
+Exit codes are uniform across the scripts: `0` success, `2` missing API key
+(live script only), `3` Quicklisp missing, `1` boundary self-check failed
+(sandbox mode).
 
-配套文件:`fake-mcp-server.py`(假 MCP 服务器,与 tests/ 同源)。
+## Environment variables (live-quickstart.lisp)
 
-详细文档见 [docs/mcp.md](../docs/mcp.md)。
+| Variable | Meaning | Default |
+|---|---|---|
+| `CHARIOT_PROVIDER` | Provider preset (`deepseek` / `qwen` / `glm` / `openai`) | `deepseek` |
+| `CHARIOT_MODEL` | Model override for the primary provider | preset default |
+| `CHARIOT_FALLBACK_PROVIDERS` | Space-separated fallback chain, e.g. `"glm qwen"` | none |
+
+## Files
+
+- `fake-mcp-server.py` — the fake MCP server used by `mcp-demo.lisp`
+  (shared with the test suite; implements lifecycle + tools with paging,
+  slow/failing tools, server-initiated requests, crash injection).
+
+For the complete, progressively complex example project (release notes,
+code review with session auditing, prompt-eval regression pipeline), see
+[../demo/](../demo/README.md). MCP details: [../docs/mcp.md](../docs/mcp.md).

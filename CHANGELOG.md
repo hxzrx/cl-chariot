@@ -1,5 +1,46 @@
 # 更新日志
 
+## [0.9.2] - 2026-10-03
+
+**补丁版:修复与示例重做**——四处库缺陷修复,无 API 变更;
+demo/ 与 examples/ 示例全面重做为实战型示例。版本号同步:
+cl-chariot.asd(base 系统)、`+version+`、`+cli-version+`、双 README。
+
+### 修复
+- **路径受限世界三处同族缺陷(src/world.lisp)**:前缀比较 `string=`
+  只给了 `:end2` 而缺 `:end1`,两侧区间长度不等恒为 NIL——
+  - 根内**绝对路径**全部被误判越界(工具带绝对路径即失败);
+  - **根目录本身(无尾斜杠**,如 glob/grep 的起始目录参数)被误判
+    越界;同时收紧为「前缀之后必须紧跟 `/` 或恰好结束」,杜绝
+    `/root-evil` 型同前缀绕过;
+  - `relative-path` **恒返回绝对路径**:glob 带目录前缀的模式
+    (如 `src/**/*.lisp`)恒无匹配,违反其 docstring 的相对呈现契约;
+  - 均附回归断言(tool-suite:绝对路径根内可用、根无尾斜杠可用、
+    同前缀绕过被拒、相对呈现、目录前缀模式可用)。
+- **Provider 层 handler-case 子句错位(src/provider.lisp)**:
+  `default-http-post` 的传输异常子句被收尾括号错位吞进 4xx/5xx 子句
+  的 body——传输层异常(连接失败/SSL 截断)与 4xx/5xx 响应实际执行的
+  是对未定义函数 E 的调用,以 undefined-function 崩溃,
+  transport-error 兜底从未生效(该缺陷自始伴随一条未定义变量
+  编译警告)。修正结构并新增「连接拒绝 → transport-error」回归测试,
+  编译警告随之消除。
+
+### 示例
+- **demo/ 全面重做**为三个实战型示例(单包 `chariot-demo`,产物落
+  `demo/out/`,中英文 README,默认英文):
+  - 发布说明生成器:自定义 git 工具 + 路径受限只读世界 + `:readonly`
+    审批 + 可编程验证门(fail-closed)+ 墙钟超时;
+  - 代码审查智能体:审批回调即策略 + 子智能体(文档/测试覆盖)+
+    会话持久化与离线审计(session-runs/filter/search/usage-report)+
+    token 预算 + 摘要压缩;
+  - 提示词回归评测流水线:策略工件(存盘/读回/指纹对账)× 任务套件
+    (基准运行时从仓库计算,与工具同口径)→ 批次汇总与 eval-diff;
+  - 三个示例均经真机验证(deepseek-flash)。
+- **examples/ 重整**:保留并加固离线 MCP 端到端演示(Quicklisp
+  前置检查与统一退出码);新增 `bwrap-sandbox.lisp`(沙箱边界自检,
+  离线,降级路径受限世界时对比两种边界)与 `live-quickstart.lisp`
+  (真机最小上手,含后备链);中英文 README(默认英文)。
+
 ## [0.9.1] - 2026-09-21
 
 **补丁版:文档与冻结前置**——嵌入指南、API 稳定性承诺与废弃机制;

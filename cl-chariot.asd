@@ -1,29 +1,45 @@
-;;;; cl-chariot.asd —— CL-Chariot 系统定义
+;;;; cl-chariot.asd — CL-Chariot system definitions
 ;;;;
-;;;; CL-Chariot 是一个用 Common Lisp 编写的「智能体驾驭框架」(Agent Harness):
-;;;; 以 OpenAI 兼容协议驱动 DeepSeek / Qwen / GLM / OpenAI 等多种大模型,
-;;;; 提供可编程的智能体主循环(Agent Loop)、工具系统、审批策略、会话持久化,
-;;;; 既可以作为程序库嵌入大型项目,也附带一个命令行交互前端(CLI)。
+;;;; CL-Chariot is an Agent Harness written in Common Lisp: it drives
+;;;; DeepSeek / Qwen / GLM / OpenAI and other LLMs through a unified
+;;;; OpenAI-compatible protocol, and provides a programmable agent loop,
+;;;; a declarative tool system with pluggable execution worlds, approval
+;;;; policies, session persistence, versioned policy artifacts with an
+;;;; eval harness. It can be embedded as a library into large projects,
+;;;; and also ships with an interactive command-line frontend (CLI).
 ;;;;
-;;;; 分层结构(自底向上):
-;;;;   cl-chariot/base   —— 纯函数工具集、JSON 编解码、消息模型(零副作用依赖)
-;;;;   cl-chariot/llm    —— 多厂商 Provider 层:SSE 流式、重试、用量记账
-;;;;   cl-chariot/tools  —— 工具系统:define-tool、内置工具(bash/read/write/edit/glob/grep/web-fetch)
-;;;;   cl-chariot/agent  —— 智能体主循环、上下文裁剪、审批策略、会话持久化
-;;;;   cl-chariot/mcp    —— MCP 客户端:stdio 传输接入 MCP 服务器、工具桥接
-;;;;   cl-chariot        —— 伞形系统:统一导出 API + 子智能体(Subagent)工具
-;;;;   cl-chariot/cli    —— 命令行前端(REPL 与一次性执行)
-;;;;   cl-chariot/test   —— FiveAM 测试套件
-;;;;   cl-chariot/demo   —— 完整示例项目
+;;;; Layered structure (bottom-up):
+;;;;   cl-chariot/base   — pure utilities, strict JSON codec, message model,
+;;;;                       deprecation machinery (zero side-effect deps)
+;;;;   cl-chariot/llm    — multi-vendor providers: presets, OpenAI-compatible
+;;;;                       chat, SSE streaming, retry with backoff, usage
+;;;;                       accounting (HTTP transport injectable)
+;;;;   cl-chariot/tools  — tool system: define-tool, JSON Schema generation,
+;;;;                       execution worlds (local / path-bound / bwrap
+;;;;                       sandbox), seven built-in tools
+;;;;   cl-chariot/agent  — agent core: loop with four guardrails (turns /
+;;;;                       context / cost / stall), context trimming with
+;;;;                       summarize-compaction, permissions, cooperative
+;;;;                       cancel & timeout, JSONL sessions (replay / audit /
+;;;;                       fork / usage reports), policy artifacts, eval harness
+;;;;   cl-chariot/mcp    — MCP client: stdio and Streamable HTTP transports
+;;;;                       (declared protocol 2025-11-25, downward compatible),
+;;;;                       lossless tool bridging
+;;;;   cl-chariot        — umbrella: unified API re-exports + subagent tool
+;;;;   cl-chariot/cli    — command-line frontend (REPL and one-shot; --mcp)
+;;;;   cl-chariot/test   — FiveAM test suite (offline + opt-in live layers)
+;;;;   cl-chariot/demo   — practical example project (release-notes generator,
+;;;;                       code-review agent, prompt-eval pipeline)
 ;;;;
-;;;; 可移植性声明:全部代码只使用 ANSI Common Lisp 与 uiop 等可移植层,
-;;;; 不使用任何特定实现包(如 sb-ext / ccl)。
+;;;; Portability: ANSI Common Lisp plus uiop and other portable layers only;
+;;;; no implementation-specific packages (e.g. sb-ext / ccl). The full test
+;;;; suite passes on both SBCL and CCL.
 
 (defsystem "cl-chariot/base"
-  :description "CL-Chariot 基础层:纯函数工具集、JSON 编解码、消息模型"
+  :description "CL-Chariot base layer: pure utilities, JSON codec, message model and deprecation machinery"
   :author "cl-chariot contributors"
   :license "MIT"
-  :version "0.9.1"
+  :version "0.9.2"
   :depends-on ()
   :pathname "src/"
   :serial t
@@ -34,7 +50,7 @@
                (:file "message")))
 
 (defsystem "cl-chariot/llm"
-  :description "CL-Chariot 模型接入层:OpenAI 兼容协议、SSE 流式、重试与用量记账"
+  :description "CL-Chariot provider layer: OpenAI-compatible chat, SSE streaming, retry with backoff and usage accounting"
   :depends-on ("uiop" "dexador" "flexi-streams" "cl-chariot/base")
   :pathname "src/"
   :serial t
@@ -42,7 +58,7 @@
                (:file "provider")))
 
 (defsystem "cl-chariot/tools"
-  :description "CL-Chariot 工具系统:define-tool、执行世界与内置工具集"
+  :description "CL-Chariot tool system: define-tool, execution worlds and the built-in tool set"
   :depends-on ("uiop" "cl-ppcre" "bordeaux-threads" "dexador" "flexi-streams"
                "cl-chariot/base")
   :pathname "src/"
@@ -53,7 +69,7 @@
                (:file "tools-builtin")))
 
 (defsystem "cl-chariot/agent"
-  :description "CL-Chariot 智能体核心:主循环、上下文压缩、审批策略、会话持久化"
+  :description "CL-Chariot agent core: loop with guardrails, context compaction, permissions, sessions, policy artifacts and eval harness"
   :depends-on ("uiop" "bordeaux-threads" "cl-chariot/base" "cl-chariot/llm"
                "cl-chariot/tools")
   :pathname "src/"
@@ -68,7 +84,7 @@
                (:file "eval")))
 
 (defsystem "cl-chariot/mcp"
-  :description "CL-Chariot MCP 客户端:stdio 与 Streamable HTTP 传输、工具桥接(协议 2025-06-18)"
+  :description "CL-Chariot MCP client: stdio and Streamable HTTP transports, lossless tool bridging (protocol 2025-11-25, downward compatible)"
   :depends-on ("uiop" "bordeaux-threads" "flexi-streams" "dexador"
                "cl-chariot/base" "cl-chariot/tools")
   :pathname "src/"
@@ -80,7 +96,7 @@
                (:file "mcp-tools")))
 
 (defsystem "cl-chariot"
-  :description "CL-Chariot 伞形系统:统一导出 API 与子智能体工具"
+  :description "CL-Chariot umbrella system: unified API re-exports and the subagent tool"
   :depends-on ("cl-chariot/agent")
   :pathname "src/"
   :serial t
@@ -88,7 +104,7 @@
                (:file "harness")))
 
 (defsystem "cl-chariot/cli"
-  :description "CL-Chariot 命令行前端:REPL 与一次性执行(--mcp 接入 MCP 服务器)"
+  :description "CL-Chariot command-line frontend (REPL and one-shot execution; --mcp attaches MCP servers)"
   :depends-on ("uiop" "cl-chariot" "cl-chariot/mcp")
   :pathname "src/"
   :serial t
@@ -96,7 +112,7 @@
                (:file "cli")))
 
 (defsystem "cl-chariot/test"
-  :description "CL-Chariot 测试套件(FiveAM)"
+  :description "CL-Chariot test suite (FiveAM; offline suites plus opt-in live layers)"
   :depends-on ("uiop" "fiveam" "cl-chariot/cli" "cl-chariot/mcp")
   :pathname "tests/"
   :serial t
@@ -122,8 +138,14 @@
                (:file "run-tests")))
 
 (defsystem "cl-chariot/demo"
-  :description "CL-Chariot 完整示例:自定义工具 + 项目分析智能体"
-  :depends-on ("uiop" "cl-chariot")
+  :description "CL-Chariot practical examples: release-notes generator, code-review agent and prompt-eval regression pipeline"
+  :depends-on ("uiop" "cl-ppcre"
+               "cl-chariot/base" "cl-chariot/llm" "cl-chariot/tools"
+               "cl-chariot/agent" "cl-chariot")
   :pathname "demo/"
   :serial t
-  :components ((:file "demo")))
+  :components ((:file "common")
+               (:file "release-notes")
+               (:file "code-review")
+               (:file "eval-pipeline")
+               (:file "demo")))

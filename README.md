@@ -8,7 +8,7 @@ agent loop, a tool system, approval policies and session persistence. It can be
 **embedded as a library into large projects**, and also ships with an
 **interactive command-line frontend (CLI)**.
 
-- Version: 0.9.1 · License: MIT
+- Version: 0.9.2 · License: MIT
 - Implementation requirement: any ANSI Common Lisp (the full test suite passes on SBCL 2.6 and CCL 1.13; no implementation-specific features)
 - Design goal: integrate into large projects as a dependency library to harness complex, industry-grade agents
 
@@ -124,7 +124,7 @@ view server status and `/tools` to list all tools. See [docs/mcp.md](docs/mcp.md
 
 ```bash
 export DEEPSEEK_API_KEY=sk-...
-demo/run.sh          # runs three progressive examples
+demo/run.sh          # runs three practical examples (release notes / code review / prompt eval)
 ```
 
 See [demo/README.md](demo/README.md).
@@ -207,7 +207,7 @@ cl-chariot/
 │   └── cli.lisp            #   Command-line frontend
 ├── tests/                  # FiveAM test suite (offline + opt-in live layers)
 ├── mcp/                    # FastMCP test server for live runs (Streamable HTTP; deployment example: cantos.cn)
-├── examples/               # Single-file example scripts (MCP end-to-end demo, etc.)
+├── examples/               # Single-file example scripts (offline MCP e2e & sandbox self-check, live quickstart)
 ├── demo/                   # A complete example project
 ├── docs/                   # Architecture / API / embedding guide / MCP / providers
 └── bin/cl-chariot          # CLI launcher
