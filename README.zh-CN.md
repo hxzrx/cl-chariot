@@ -123,12 +123,14 @@ export DEEPSEEK_API_KEY=sk-...
 demo/run.sh          # 依次运行三个实战示例(发布说明 / 代码审查 / 提示词评测)
 ```
 
-详见 [demo/README.md](demo/README.md)。
+详见 [demo/README.md](demo/README.md)。想要单文件脚本?`examples/` 提供
+离线 MCP 端到端演示、沙箱边界自检(均无需 API Key)与真机最小上手,
+见 [examples/README.md](examples/README.md)。
 
 ### 4. 运行测试
 
 ```bash
-tests/run.sh                          # 离线全量测试(1224 项断言)
+tests/run.sh                          # 离线全量测试(1234 项断言)
 CHARIOT_LIVE=1 tests/run.sh               # 附加真机联调(需 API Key)
 ```
 

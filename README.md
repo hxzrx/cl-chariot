@@ -127,12 +127,14 @@ export DEEPSEEK_API_KEY=sk-...
 demo/run.sh          # runs three practical examples (release notes / code review / prompt eval)
 ```
 
-See [demo/README.md](demo/README.md).
+See [demo/README.md](demo/README.md). Prefer single-file scripts? `examples/` has an
+offline MCP end-to-end demo, a sandbox boundary self-check (both need no API key),
+and a live quickstart — see [examples/README.md](examples/README.md).
 
 ### 4. Run the Tests
 
 ```bash
-tests/run.sh                          # full offline suite (1224 assertions)
+tests/run.sh                          # full offline suite (1234 assertions)
 CHARIOT_LIVE=1 tests/run.sh               # plus live tests (needs API keys)
 ```
 
