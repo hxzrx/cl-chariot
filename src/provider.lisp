@@ -279,7 +279,10 @@ ENV-VAR       API Key 的环境变量名。"
                                       :read-timeout (or timeout 300))
                    (values status (make-string-input-stream body-string))))))
       (handler-case (do-request)
-        ;; 注意子句顺序:先匹配 4xx/5xx 条件,再兜底传输异常
+        ;; 注意子句顺序:先匹配 4xx/5xx 条件,再兜底传输异常。
+        ;; (回归:此前子句一的收尾括号少一个,导致本子句被吞进其 body
+        ;; 成为死代码——传输异常时实际执行的是 (error (e) ...) 对未定义
+        ;; 函数 E 的调用,任何 4xx/5xx 都以 undefined-function 崩溃)
         (dexador:http-request-failed (c)
           ;; 非常规路径:Dexador 默认对 4xx/5xx 信号条件;读出响应体后转成
           ;; 与 2xx 相同的返回形态,让上层按状态码决定重试或报错。
@@ -295,10 +298,11 @@ ENV-VAR       API Key 的环境变量名。"
                                      (loop for line = (read-line s nil nil)
                                            while line
                                            do (write-line line sink)))))
-                         (t (princ-to-string b)))))))
+                         (t (princ-to-string b))))))))
         ;; 传输层异常(SSL 截断/连接重置等):统一转为可重试的 transport-error
         (error (e)
-          (error 'transport-error :message (format nil "网络传输失败:~A" e))))))))
+          (error 'transport-error
+                 :message (format nil "网络传输失败:~A" e)))))))
 
 ;;; ---------------------------------------------------------------------------
 ;;; SSE 解析

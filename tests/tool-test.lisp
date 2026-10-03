@@ -463,10 +463,37 @@
                              (parse-json "{\"file_path\":\"inside.txt\"}"))
              (is (null err-p))
              (is (search "hello inside" result)))
+           ;; 根内绝对路径同样可读(回归:前缀比较须同时限定 end1/end2,
+           ;; 否则区间长度不等,string= 恒 NIL,根内绝对路径被误判越界)
+           (multiple-value-bind (result err-p)
+               (execute-tool (find-tool tools "read")
+                             (parse-json
+                              (format nil "{\"file_path\":\"~A\"}"
+                                      (namestring (merge-pathnames "inside.txt"
+                                                                   (pathname root))))))
+             (is (null err-p))
+             (is (search "hello inside" result)))
            ;; 绝对路径指向根外 → 拒绝
            (multiple-value-bind (result err-p)
                (execute-tool (find-tool tools "read")
                              (parse-json (format nil "{\"file_path\":\"~A\"}" outside)))
+             (is (not (null err-p)))
+             (is (search "越界" result)))
+           ;; 根本身的绝对路径(无尾斜杠,如 glob 的起始目录)→ 允许
+           ;; (回归:前缀比较用根全串时,无尾斜杠形态因长度不足被误判越界)
+           (multiple-value-bind (result err-p)
+               (execute-tool (find-tool tools "glob")
+                             (parse-json
+                              (format nil "{\"pattern\":\"**/*.txt\",\"path\":\"~A\"}"
+                                      (string-right-trim "/" root))))
+             (is (null err-p))
+             (is (search "inside.txt" result)))
+           ;; 与根同前缀的根外路径 → 拒绝(防 “/root-evil” 型绕过)
+           (multiple-value-bind (result err-p)
+               (execute-tool (find-tool tools "glob")
+                             (parse-json
+                              (format nil "{\"pattern\":\"**/*.txt\",\"path\":\"~A-ev\"}"
+                                      (string-right-trim "/" root))))
              (is (not (null err-p)))
              (is (search "越界" result)))
            ;; 相对路径 .. 上跳越过根 → 拒绝
@@ -490,14 +517,22 @@
              (is (null err-p))
              (is (search "sub/new.txt" result))
              (is (uiop:file-exists-p (merge-pathnames "sub/new.txt" (pathname root)))))
-           ;; glob 与 grep 只看到根内世界
+           ;; glob 与 grep 只看到根内世界;呈现路径相对根
+           ;; (回归:relative-path 前缀比较漏 :end1 时恒返回绝对路径)
            (multiple-value-bind (result err-p)
                (execute-tool (find-tool tools "glob")
                              (parse-json "{\"pattern\":\"**/*.txt\"}"))
              (is (null err-p))
              (is (search "inside.txt" result))
              (is (search "sub/new.txt" result))
-             (is (not (search "chariot-world-outside" result))))
+             (is (not (search "chariot-world-outside" result)))
+             (is (not (search "chariot-world-test" result)))
+             ;; 带目录前缀的模式同样可用(绝对路径呈现时恒无匹配)
+             (multiple-value-bind (r2 e2)
+                 (execute-tool (find-tool tools "glob")
+                               (parse-json "{\"pattern\":\"sub/*.txt\"}"))
+               (is (null e2))
+               (is (search "new.txt" r2))))
            (multiple-value-bind (result err-p)
                (execute-tool (find-tool tools "grep")
                              (parse-json "{\"pattern\":\"hello\"}"))

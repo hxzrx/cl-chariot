@@ -324,3 +324,14 @@
     (signals empty-response-error
       (chat (make-provider :deepseek :api-key "k" :retries 1 :retry-delay 0)
             (list (make-user-message "hi")) :stream nil))))
+
+(test default-http-post-transport-error-clause
+  ;; 回归:default-http-post 的 handler-case 第二子句(error → transport-error)
+  ;; 曾因收尾括号错位被吞进第一子句的 body——传输层异常时实际执行的是
+  ;; (error (e) …) 对未定义函数 E 的调用,以 undefined-function 崩溃。
+  ;; 连接被拒绝的本地端口应干净地信号 TRANSPORT-ERROR。
+  (signals chariot-llm:transport-error
+    (chariot-llm::default-http-post "http://127.0.0.1:1/chariot-refused"
+                                    '(("Content-Type" . "application/json"))
+                                    "{}"
+                                    :want-stream t :timeout 5)))

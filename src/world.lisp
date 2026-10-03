@@ -113,7 +113,11 @@
   (let* ((abs (namestring path))
          (base-str (namestring base)))
     (if (and (> (length abs) (length base-str))
-             (string= abs base-str :end2 (length base-str)))
+             ;; 比较前缀区间:end1/end2 须同时给出——
+             ;; 只给 :end2 时两侧区间长度不等,string= 恒 NIL(恒返回绝对路径)
+             (string= abs base-str
+                      :end1 (length base-str)
+                      :end2 (length base-str)))
         (subseq abs (length base-str))
         abs)))
 
@@ -315,15 +319,27 @@
 (defun %path-bound-target (root path)
   "把 PATH 词法解析到 ROOT 目录之内,返回 (VALUES 磁盘绝对路径 呈现路径)。
 绝对路径若不在 ROOT 下、或相对路径上跳越过 ROOT(过多 ..),一律信号
-TOOL-ERROR。词法边界:不追查符号链接,这一点由文档显式声明。"
+TOOL-ERROR。词法边界:不追查符号链接,这一点由文档显式声明。
+绝对路径允许两种形态:带尾斜杠的根本身,或不带尾斜杠的根前缀
+(如 glob/grep 的起始目录参数)——前缀后必须紧跟 “/” 或恰好结束,
+杜绝 “/root-evil” 型的同前缀绕过。"
   (let* ((root-str (namestring (uiop:ensure-directory-pathname (pathname root))))
+         (root-prefix (string-right-trim "/" root-str))
          (raw (chariot-util:ensure-string path))
          (rel-str (if (uiop:absolute-pathname-p raw)
                       (progn
-                        (unless (and (>= (length raw) (length root-str))
-                                     (string= raw root-str :end2 (length root-str)))
+                        (unless (and (>= (length raw) (length root-prefix))
+                                     ;; 比较前缀区间:end1/end2 须同时给出——
+                                     ;; 只给 :end2 时两侧区间长度不等,string= 恒 NIL
+                                     (string= raw root-prefix
+                                              :end1 (length root-prefix)
+                                              :end2 (length root-prefix))
+                                     (or (= (length raw) (length root-prefix))
+                                         (char= (char raw (length root-prefix)) #\/)))
                           (tool-error (format nil "路径越界:~A 不在根 ~A 之内" raw root-str)))
-                        (subseq raw (length root-str)))
+                        (if (> (length raw) (length root-prefix))
+                            (subseq raw (1+ (length root-prefix)))
+                            ""))
                       raw))
          (parts '())
          (escape nil))
